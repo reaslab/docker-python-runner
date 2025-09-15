@@ -42,15 +42,21 @@ jobs:
 
     - name: Configure Nix
       run: |
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
         # 配置 Nix 以支持 Flakes
         mkdir -p ~/.config/nix
         cat > ~/.config/nix/nix.conf << EOF
         experimental-features = nix-command flakes
         allow-import-from-derivation = true
         EOF
+        # 验证配置
+        nix --version
 
     - name: Build Docker image with Nix Flakes
       run: |
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
         # 使用 nix flake 构建，利用 flake.nix 中定义的环境
         # 启用缓存以提高构建速度
         nix build .#docker-image --option sandbox false
