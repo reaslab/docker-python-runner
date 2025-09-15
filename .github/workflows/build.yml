@@ -57,9 +57,11 @@ jobs:
       run: |
         # 加载 Nix 环境
         . /home/runner/.nix-profile/etc/profile.d/nix.sh
+        # 设置环境变量以允许非自由包（Gurobi）
+        export NIXPKGS_ALLOW_UNFREE=1
         # 使用 nix flake 构建，利用 flake.nix 中定义的环境
         # 启用缓存以提高构建速度
-        nix build .#docker-image --option sandbox false
+        nix build .#docker-image --option sandbox false --impure
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -187,8 +189,7 @@ jobs:
       uses: dataaxiom/ghcr-cleanup-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        package-name: ${{ env.IMAGE_NAME }}
-        keep-versions: 10
+        package: ${{ env.IMAGE_NAME }}
 
   generate-summary:
     runs-on: ubuntu-latest

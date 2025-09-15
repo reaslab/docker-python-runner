@@ -22,6 +22,8 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [(import rust-overlay)];
+          config.allowUnfree = true;
+          config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "gurobi" "gurobipy" ];
         };
       in {
         formatter = pkgs.alejandra;
