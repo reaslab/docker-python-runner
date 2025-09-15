@@ -1,0 +1,43 @@
+# Nix build artifacts
+result
+result-*
+
+# Docker build artifacts
+.dockerignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Gurobi license (keep private)
+gurobi.lic
+*.lic
+
+# Test files
+test/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup

@@ -1,0 +1,200 @@
+name: Build and Push Docker Images with Nix
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: 'Push images to registry'
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: reaslab/docker-python-uv
+
+jobs:
+  build:
+    runs-on: fedora-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Nix
+      uses: cachix/install-nix-action@v22
+      with:
+        nix_path: nixpkgs=channel:nixos-unstable
+
+    - name: Install Nix dependencies
+      run: |
+        nix-env -iA nixpkgs.dockerTools
+        nix-env -iA nixpkgs.gnutar
+        nix-env -iA nixpkgs.gzip
+
+    - name: Build Docker image with Nix
+      run: |
+        nix-build docker.nix --option sandbox false
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      if: github.event.inputs.push_images != 'false'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Load Docker image
+      run: |
+        docker load < result
+
+    - name: Extract metadata
+      id: meta
+      if: github.event.inputs.push_images != 'false'
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=raw,value=secure-latest
+
+    - name: Tag Docker image
+      if: github.event.inputs.push_images != 'false'
+      run: |
+        # Get the image ID from the loaded image
+        IMAGE_ID=$(docker images --format "{{.ID}}" | head -1)
+        echo "Image ID: $IMAGE_ID"
+        
+        # Tag with all metadata tags
+        for tag in ${{ steps.meta.outputs.tags }}; do
+          echo "Tagging with: $tag"
+          docker tag $IMAGE_ID $tag
+        done
+
+    - name: Push Docker image
+      if: github.event.inputs.push_images != 'false'
+      run: |
+        for tag in ${{ steps.meta.outputs.tags }}; do
+          echo "Pushing: $tag"
+          docker push $tag
+        done
+
+    - name: Run security scan
+      if: github.event.inputs.push_images != 'false'
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      if: github.event.inputs.push_images != 'false'
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  test:
+    runs-on: fedora-latest
+    needs: build
+    if: github.event.inputs.push_images != 'false'
+
+    steps:
+    - name: Test Python version
+      run: |
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version
+
+    - name: Test UV installation
+      run: |
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest uv --version
+
+    - name: Test security restrictions
+      run: |
+        # Test that dangerous modules are restricted
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python -c "
+        try:
+            import os
+            print('ERROR: os module should be restricted')
+            exit(1)
+        except ImportError:
+            print('OK: os module is properly restricted')
+        "
+
+    - name: Test Gurobi availability
+      run: |
+        # Test that Gurobi is available (without license)
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python -c "
+        try:
+            import gurobipy
+            print('OK: Gurobi Python package is available')
+        except ImportError as e:
+            print(f'ERROR: Gurobi not available: {e}')
+            exit(1)
+        "
+
+    - name: Test scientific packages
+      run: |
+        # Test that scientific packages are available
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python -c "
+        import numpy
+        import scipy
+        import pandas
+        import matplotlib
+        import sklearn
+        print('OK: All scientific packages are available')
+        print(f'NumPy version: {numpy.__version__}')
+        print(f'SciPy version: {scipy.__version__}')
+        print(f'Pandas version: {pandas.__version__}')
+        "
+
+  cleanup:
+    runs-on: fedora-latest
+    needs: [build, test]
+    if: always() && github.event.inputs.push_images != 'false'
+
+    permissions:
+      packages: write
+
+    steps:
+    - name: Clean up old images
+      uses: dataaxiom/ghcr-cleanup-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        package-name: ${{ env.IMAGE_NAME }}
+        keep-versions: 10
+
+  generate-summary:
+    runs-on: fedora-latest
+    needs: [build, test]
+    if: always()
+
+    steps:
+    - name: Generate summary
+      run: |
+        echo "## 🐳 Docker Image Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+        echo "- \`secure-latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Features:**" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Secure Python 3.12 environment" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ UV package manager" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Gurobi optimization solver" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Scientific computing packages" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Non-root user execution" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Resource limits and security restrictions" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Registry:** [GitHub Container Registry](https://github.com/orgs/reaslab/packages)" >> $GITHUB_STEP_SUMMARY
