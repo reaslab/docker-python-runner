@@ -179,6 +179,9 @@ jobs:
         echo "✅ Image created: $(docker inspect --format='{{.Created}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
         echo "✅ Image architecture: $(docker inspect --format='{{.Architecture}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
         echo "✅ Image OS: $(docker inspect --format='{{.Os}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image entrypoint: $(docker inspect --format='{{.Config.Entrypoint}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image cmd: $(docker inspect --format='{{.Config.Cmd}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image working dir: $(docker inspect --format='{{.Config.WorkingDir}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
 
     - name: Test basic container functionality
       run: |
@@ -196,50 +199,69 @@ jobs:
     - name: Test Python installation (inspect)
       run: |
         echo "Testing Python installation via image inspection..."
-        # Check if Python is available in the image
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest which python3 || echo "python3 not found in PATH"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest ls -la /usr/bin/python* || echo "No Python binaries found"
+        echo "Checking PATH environment:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest echo $PATH || echo "PATH not available"
+        echo "Searching for Python in common locations:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find /usr -name "python*" 2>/dev/null || echo "No Python found in /usr"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find /nix -name "python*" 2>/dev/null || echo "No Python found in /nix"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f 2>/dev/null | head -10 || echo "No Python found anywhere"
+        echo "Checking if Python is available via direct execution:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version 2>&1 || echo "python command failed"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python3 --version 2>&1 || echo "python3 command failed"
         echo "✅ Python installation check completed"
 
     - name: Test UV installation (inspect)
       run: |
         echo "Testing UV installation via image inspection..."
-        # Check if UV is available in the image
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest which uv || echo "uv not found in PATH"
+        echo "Searching for UV in common locations:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "uv" -type f 2>/dev/null || echo "No UV found"
+        echo "Checking if UV is available via direct execution:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest uv --version 2>&1 || echo "uv command failed"
         echo "✅ UV installation check completed"
+
+    - name: Find Python executable
+      run: |
+        echo "Finding Python executable in the image..."
+        # Find all Python executables
+        PYTHON_PATHS=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f -executable 2>/dev/null | head -5)
+        echo "Found Python executables:"
+        echo "$PYTHON_PATHS"
+        
+        # Try to find a working Python
+        for python_path in $PYTHON_PATHS; do
+          echo "Testing $python_path:"
+          docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $python_path --version 2>&1 || echo "Failed to run $python_path"
+        done
 
     - name: Test package availability (inspect)
       run: |
         echo "Testing package availability via image inspection..."
-        # Check if required packages are installed
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python3 -c "
-        try:
-            import numpy
-            print('✅ NumPy available')
-        except ImportError:
-            print('❌ NumPy not available')
+        echo "Checking if we can run the container's default command:"
+        # Try running the container without overriding entrypoint
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version 2>&1 || echo "Default python command failed"
         
-        try:
-            import gurobipy
-            print('✅ Gurobi available')
-        except ImportError:
-            print('❌ Gurobi not available')
-        " || echo "Package check completed with warnings"
-
-  cleanup:
-    runs-on: ubuntu-latest
-    needs: [build, test]
-    if: always() && github.event.inputs.push_images != 'false'
-
-    permissions:
-      packages: write
-
-    steps:
-    - name: Clean up old images
-      uses: dataaxiom/ghcr-cleanup-action@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        package: ${{ env.IMAGE_NAME }}
+        echo "Checking Python package availability with found executables:"
+        # Find and test Python executables
+        PYTHON_EXECUTABLES=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f -executable 2>/dev/null | head -3)
+        
+        for python_cmd in $PYTHON_EXECUTABLES; do
+          echo "Testing packages with $python_cmd:"
+          docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $python_cmd -c "
+          try:
+              import numpy
+              print('✅ NumPy available')
+          except ImportError as e:
+              print(f'❌ NumPy not available: {e}')
+          
+          try:
+              import gurobipy
+              print('✅ Gurobi available')
+          except ImportError as e:
+              print(f'❌ Gurobi not available: {e}')
+          " 2>&1 || echo "Package check failed with $python_cmd"
+        done
+        
+        echo "✅ Package availability check completed"
 
   generate-summary:
     runs-on: ubuntu-latest
