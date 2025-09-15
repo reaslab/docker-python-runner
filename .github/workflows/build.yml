@@ -31,10 +31,10 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install Nix 3.8.5
+    - name: Install Nix 2.30.2
       run: |
-        # 安装 Nix 3.8.5 使用官方安装脚本
-        curl -L https://releases.nixos.org/nix/nix-3.8.5/install | sh
+        # 安装最新稳定版 Nix 2.30.2
+        sh <(curl -L https://nixos.org/nix/install) --no-confirm
         # 重新加载环境
         . /home/runner/.nix-profile/etc/profile.d/nix.sh
         # 验证安装
