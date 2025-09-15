@@ -33,10 +33,12 @@ jobs:
 
     - name: Install Nix 3.8.5
       run: |
-        # 安装 Determinate Nix 3.8.5 (非交互式模式)
-        curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --version 3.8.5 --no-confirm
+        # 安装 Nix 3.8.5 使用官方安装脚本
+        curl -L https://releases.nixos.org/nix/nix-3.8.5/install | sh
         # 重新加载环境
-        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
+        # 验证安装
+        nix --version
 
     - name: Configure Nix
       run: |
