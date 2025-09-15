@@ -16,7 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: reaslab/docker-python-uv
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
