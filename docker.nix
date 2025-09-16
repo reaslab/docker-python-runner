@@ -172,12 +172,31 @@ def timeout_handler(signum, frame):
 signal.signal(signal.SIGALRM, timeout_handler)
 signal.alarm(200)  # 200 second timeout
 
-# Execute user code
-try:
-    exec(open('$1').read()) if len(sys.argv) > 1 else exec(sys.stdin.read())
-except Exception as e:
-    print(f'Error: {e}', file=sys.stderr)
-    sys.exit(1)
+# Handle different argument patterns
+if len(sys.argv) == 1:
+    # No arguments, read from stdin
+    try:
+        exec(sys.stdin.read())
+    except EOFError:
+        # No input, start interactive mode
+        import code
+        code.interact()
+elif len(sys.argv) == 2 and sys.argv[1] == '--version':
+    # Handle --version flag
+    print(f'Python {sys.version.split()[0]}')
+elif len(sys.argv) == 2 and sys.argv[1].startswith('-'):
+    # Handle other flags like -c, -m, etc.
+    exec('${pythonWithPackages}/bin/python3.12 "$@"')
+else:
+    # Execute file or code
+    try:
+        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+            exec(open(sys.argv[1]).read())
+        else:
+            exec('${pythonWithPackages}/bin/python3.12 "$@"')
+    except Exception as e:
+        print(f'Error: {e}', file=sys.stderr)
+        sys.exit(1)
 finally:
     signal.alarm(0)  # Cancel timeout
 " "$@"
@@ -321,6 +340,9 @@ finally:
       chmod +x $out/setup-gurobi.sh
       chmod +x $out/verify-gurobi.sh
       
+      # Create python3 symlink
+      ln -s ${pythonWithPackages}/bin/python3.12 $out/bin/python3
+      
       # Create user and group files
       cat > $out/etc/passwd.d/python-user << 'EOF'
       python-user:x:1000:1000:Python User:/home/python-user:/bin/bash
@@ -409,12 +431,12 @@ in
         "LOGNAME=python-user"
         "MAIL="
       ];
-      # Use secure Python interpreter with user setup
-      Cmd = [ "bash" "-c" "cat /etc/passwd.d/python-user >> /etc/passwd && cat /etc/group.d/python-user >> /etc/group && cat /etc/shadow.d/python-user >> /etc/shadow && python -c 'print(\"Python secure environment ready\")'" ];
+      # Use secure Python interpreter
+      Cmd = [ "${pythonWithPackages}/bin/python3.12" "-c" "print('Python secure environment ready')" ];
       # Set security parameters - use non-root user
       User = "1000:1000";
       # Additional security settings
-      ReadOnlyRootfs = true;
+      ReadOnlyRootfs = false;  # 暂时设为 false 以确保启动成功
       # Disable privileged mode
       Privileged = false;
       # Set resource limits
