@@ -284,6 +284,7 @@ finally:
     buildCommand = ''
       # Create directories with proper ownership
       mkdir -p $out/app
+      mkdir -p $out/bin
       mkdir -p $out/etc/uv
       mkdir -p $out/home/python-user
       mkdir -p $out/etc/passwd.d
@@ -340,8 +341,8 @@ finally:
       chmod +x $out/setup-gurobi.sh
       chmod +x $out/verify-gurobi.sh
       
-      # Create python3 symlink
-      ln -s ${pythonWithPackages}/bin/python3.12 $out/bin/python3
+      # Note: python3 binary is provided by pythonWithPackages in runtimeEnv
+      # No need to create a symlink here to avoid collision
       
       # Create user and group files
       cat > $out/etc/passwd.d/python-user << 'EOF'

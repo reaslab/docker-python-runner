@@ -39,8 +39,9 @@
           shellHook = ''
             echo "🐍 Python Docker Runner Development Environment"
             echo "Available commands:"
-            echo "  nix build .#docker-image  - Build Docker image"
-            echo "  nix fmt                   - Format Nix files"
+            echo "  nix build .#packages.x86_64-linux.docker-image  - Build Docker image"
+            echo "  nix build .#docker-image                       - Build Docker image (short form)"
+            echo "  nix fmt                                         - Format Nix files"
             echo ""
           '';
         };

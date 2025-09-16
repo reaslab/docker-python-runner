@@ -97,12 +97,12 @@ jobs:
           export NIX_CONF_DIR=/tmp/nix-conf
           mkdir -p \$NIX_CONF_DIR
           
-          # 使用与本地构建相同的方式，添加详细输出
+          # 使用正确的 flake 输出路径构建
           echo 'Starting build with detailed output...'
-          nix build .#docker-image --option sandbox false --impure --rebuild --show-trace --verbose || {
+          nix build .#docker-image --option sandbox false --impure --show-trace --verbose || {
             echo '❌ First build attempt failed, trying with different options...'
             # 尝试不同的构建选项
-            nix build .#docker-image --option sandbox false --impure --rebuild --option max-jobs 1 --option cores 1 || {
+            nix build .#docker-image --option sandbox false --impure --option max-jobs 1 --option cores 1 || {
               echo '❌ Second build attempt failed, trying without rebuild...'
               nix build .#docker-image --option sandbox false --impure --option max-jobs 1 --option cores 1
             }
@@ -157,13 +157,26 @@ jobs:
         nix develop --command bash -c "
           if [ -L result ]; then
             echo '✅ Result symlink found, loading Docker image...'
+            echo 'Result file info:'
+            ls -la result
+            file result
+            echo 'Loading Docker image...'
             docker load < result
             echo '✅ Docker image loaded successfully'
+            
+            # 显示加载的镜像信息
+            echo 'Loaded images:'
+            docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}'
           else
             echo '❌ Result symlink not found, rebuilding...'
-            nix build .#docker-image --option sandbox false --impure --rebuild
-            docker load < result
-            echo '✅ Docker image rebuilt and loaded successfully'
+            nix build .#docker-image --option sandbox false --impure
+            if [ -L result ]; then
+              docker load < result
+              echo '✅ Docker image rebuilt and loaded successfully'
+            else
+              echo '❌ Build failed, no result symlink created'
+              exit 1
+            fi
           fi
         "
 
@@ -171,66 +184,97 @@ jobs:
     - name: Tag Docker image
       if: github.event.inputs.push_images != 'false'
       run: |
-        # Get the image ID from the loaded image
-        IMAGE_ID=$(docker images --format "{{.ID}}" | head -1)
-        echo "Image ID: $IMAGE_ID"
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
         
-        # Create tags based on trigger type
-        TAGS=()
+        # 设置环境变量以允许非自由包（Gurobi）
+        export NIXPKGS_ALLOW_UNFREE=1
         
-        # Always create latest tag
-        TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest")
-        
-        # Create version-specific tags based on trigger
-        if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-          # Main branch push: create timestamp and SHA tags
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}")
-        elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          # Manual trigger: create timestamp tag only
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-        elif [ "${{ github.event_name }}" = "schedule" ]; then
-          # Scheduled: create timestamp tag only
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-        fi
-        
-        # Tag with all tags
-        for tag in "${TAGS[@]}"; do
-          echo "Tagging with: $tag"
-          docker tag "$IMAGE_ID" "$tag"
-        done
-        
-        echo "All tags created successfully"
+        # 在 Nix 开发环境中处理 Docker 镜像标签
+        echo "🏷️ Tagging Docker image..."
+        nix develop --command bash -c "
+          # 获取最新加载的镜像ID（通过比较加载前后的镜像列表）
+          echo 'Current Docker images:'
+          docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}'
+          
+          # 查找我们的镜像（通过仓库名或标签模式）
+          IMAGE_ID=\$(docker images --format '{{.ID}}' | head -1)
+          if [ -z \"\$IMAGE_ID\" ]; then
+            echo '❌ No Docker images found'
+            exit 1
+          fi
+          
+          echo \"Using image ID: \$IMAGE_ID\"
+          
+          # 创建标签数组
+          TAGS=()
+          
+          # 总是创建 latest 标签
+          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\")
+          
+          # 根据触发类型创建版本特定标签
+          if [ \"${{ github.event_name }}\" = \"push\" ] && [ \"${{ github.ref }}\" = \"refs/heads/main\" ]; then
+            # Main branch push: 创建时间戳和 SHA 标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}\")
+          elif [ \"${{ github.event_name }}\" = \"workflow_dispatch\" ]; then
+            # 手动触发: 只创建时间戳标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+          elif [ \"${{ github.event_name }}\" = \"schedule\" ]; then
+            # 定时触发: 只创建时间戳标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+          fi
+          
+          # 使用所有标签进行标记
+          for tag in \"\${TAGS[@]}\"; do
+            echo \"Tagging with: \$tag\"
+            docker tag \"\$IMAGE_ID\" \"\$tag\"
+          done
+          
+          echo \"All tags created successfully\"
+          echo \"Final tagged images:\"
+          docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}' | grep -E \"(${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}|ghcr.io/reaslab)\"
+        "
 
     - name: Push Docker image
       if: github.event.inputs.push_images != 'false'
       run: |
-        # Create tags based on trigger type (same as tagging step)
-        TAGS=()
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
         
-        # Always create latest tag
-        TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest")
+        # 设置环境变量以允许非自由包（Gurobi）
+        export NIXPKGS_ALLOW_UNFREE=1
         
-        # Create version-specific tags based on trigger
-        if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-          # Main branch push: create timestamp and SHA tags
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}")
-        elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          # Manual trigger: create timestamp tag only
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-        elif [ "${{ github.event_name }}" = "schedule" ]; then
-          # Scheduled: create timestamp tag only
-          TAGS+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)")
-        fi
-        
-        # Push all tags
-        for tag in "${TAGS[@]}"; do
-          echo "Pushing: $tag"
-          docker push "$tag"
-        done
-        
-        echo "All tags pushed successfully"
+        # 在 Nix 开发环境中推送 Docker 镜像
+        echo "🚀 Pushing Docker image..."
+        nix develop --command bash -c "
+          # 创建标签数组（与标记步骤相同）
+          TAGS=()
+          
+          # 总是创建 latest 标签
+          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\")
+          
+          # 根据触发类型创建版本特定标签
+          if [ \"${{ github.event_name }}\" = \"push\" ] && [ \"${{ github.ref }}\" = \"refs/heads/main\" ]; then
+            # Main branch push: 创建时间戳和 SHA 标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}\")
+          elif [ \"${{ github.event_name }}\" = \"workflow_dispatch\" ]; then
+            # 手动触发: 只创建时间戳标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+          elif [ \"${{ github.event_name }}\" = \"schedule\" ]; then
+            # 定时触发: 只创建时间戳标签
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+          fi
+          
+          # 推送所有标签
+          for tag in \"\${TAGS[@]}\"; do
+            echo \"Pushing: \$tag\"
+            docker push \"\$tag\"
+          done
+          
+          echo \"All tags pushed successfully\"
+        "
 
     - name: Run security scan
       if: github.event.inputs.push_images != 'false'
@@ -364,6 +408,18 @@ jobs:
         
         echo "Testing UV:"
         docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "export PATH=\${PATH} && uv --version" || echo "UV not found"
+        
+        # 测试安全限制
+        echo "Testing security restrictions:"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"try: import os; print('ERROR: os should be restricted'); exit(1); except ImportError: print('OK: os is restricted')\"" || echo "Security test failed"
+        
+        # 测试Gurobi可用性
+        echo "Testing Gurobi availability:"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import gurobipy; print('OK: Gurobi available')\"" || echo "Gurobi test failed"
+        
+        # 测试科学计算包
+        echo "Testing scientific packages:"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import numpy, scipy, pandas; print('OK: Scientific packages available')\"" || echo "Scientific packages test failed"
         
         echo "✅ All tests completed successfully"
 
