@@ -321,9 +321,6 @@ finally:
       chmod +x $out/setup-gurobi.sh
       chmod +x $out/verify-gurobi.sh
       
-      # Create python3 symlink
-      ln -s /bin/python $out/bin/python3
-      
       # Create user and group files
       cat > $out/etc/passwd.d/python-user << 'EOF'
       python-user:x:1000:1000:Python User:/home/python-user:/bin/bash
@@ -375,7 +372,7 @@ in
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
         # Set PATH to include our secure commands
-        "PATH=${runtimeEnv}/bin:${pythonWithPackages}/bin:/usr/local/bin:/usr/bin"
+        "PATH=${runtimeEnv}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
         # Gurobi environment variables (using gurobi package from nixpkgs)
@@ -398,12 +395,12 @@ in
         "LOGNAME=python-user"
         "MAIL="
       ];
-      # Use secure Python interpreter
-      Cmd = [ "python" "-c" "print('Python secure environment ready')" ];
+      # Use secure Python interpreter with user setup
+      Cmd = [ "bash" "-c" "cat /etc/passwd.d/python-user >> /etc/passwd && cat /etc/group.d/python-user >> /etc/group && cat /etc/shadow.d/python-user >> /etc/shadow && python -c 'print(\"Python secure environment ready\")'" ];
       # Set security parameters - use non-root user
       User = "1000:1000";
       # Additional security settings
-      ReadOnlyRootfs = false;  # 暂时设为 false 以确保启动成功
+      ReadOnlyRootfs = true;
       # Disable privileged mode
       Privileged = false;
       # Set resource limits
