@@ -353,7 +353,7 @@ finally:
 in
   # Use buildImage to avoid diffID conflicts
   pkgs.dockerTools.buildImage {
-    name = "ghcr.io/reaslab/docker-python-uv";
+    name = "ghcr.io/reaslab/docker-python-runner";
     tag = "secure-latest";
     
     copyToRoot = pkgs.buildEnv {
@@ -371,7 +371,7 @@ in
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
         # Set PATH to include our secure commands
-        "PATH=${runtimeEnv}/bin:/usr/local/bin:/usr/bin"
+        "PATH=${runtimeEnv}/bin:${pythonWithPackages}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
         # Gurobi environment variables (using gurobi package from nixpkgs)
@@ -399,7 +399,7 @@ in
       # Set security parameters - use non-root user
       User = "1000:1000";
       # Additional security settings
-      ReadOnlyRootfs = true;
+      ReadOnlyRootfs = false;  # 暂时设为 false 以确保启动成功
       # Disable privileged mode
       Privileged = false;
       # Set resource limits

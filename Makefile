@@ -4,7 +4,7 @@
 
 # Default values
 REGISTRY ?= ghcr.io
-IMAGE_NAME ?= reaslab/docker-python-uv
+IMAGE_NAME ?= reaslab/docker-python-runner
 TAG ?= secure-latest
 
 help: ## Show this help message

@@ -90,6 +90,8 @@ jobs:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
           type=raw,value=secure-latest
+          type=raw,value=secure-{{date 'YYYYMMDD-HHmmss'}}
+          type=sha,prefix=secure-,format=short
 
     - name: Tag Docker image
       if: github.event.inputs.push_images != 'false'
@@ -170,6 +172,13 @@ jobs:
         docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep ${{ env.IMAGE_NAME }}
         echo "Image details:"
         docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest | jq '.[0].Config'
+        
+        # 检查镜像的基本信息
+        echo "Image architecture: $(docker inspect --format='{{.Architecture}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image OS: $(docker inspect --format='{{.Os}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image created: $(docker inspect --format='{{.Created}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image working dir: $(docker inspect --format='{{.Config.WorkingDir}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image user: $(docker inspect --format='{{.Config.User}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
 
     - name: Test Docker image configuration
       run: |
@@ -199,24 +208,51 @@ jobs:
     - name: Test Python installation (inspect)
       run: |
         echo "Testing Python installation via image inspection..."
-        echo "Checking PATH environment:"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest echo $PATH || echo "PATH not available"
-        echo "Searching for Python in common locations:"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find /usr -name "python*" 2>/dev/null || echo "No Python found in /usr"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find /nix -name "python*" 2>/dev/null || echo "No Python found in /nix"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f 2>/dev/null | head -10 || echo "No Python found anywhere"
-        echo "Checking if Python is available via direct execution:"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version 2>&1 || echo "python command failed"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python3 --version 2>&1 || echo "python3 command failed"
+        
+        # 检查容器的默认命令是否能工作
+        echo "Testing container default command:"
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest 2>&1 || echo "Default command test completed"
+        
+        # 检查环境变量
+        echo "Checking environment variables:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest env | grep -E "(PATH|PYTHON)" || echo "No Python environment variables found"
+        
+        # 查找 Python 可执行文件
+        echo "Searching for Python executables:"
+        PYTHON_EXECS=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f -executable 2>/dev/null | head -5)
+        echo "Found Python executables: $PYTHON_EXECS"
+        
+        # 测试找到的 Python 可执行文件
+        if [ -n "$PYTHON_EXECS" ]; then
+          for python_exec in $PYTHON_EXECS; do
+            echo "Testing $python_exec:"
+            docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $python_exec --version 2>&1 || echo "Failed to run $python_exec"
+          done
+        else
+          echo "No Python executables found"
+        fi
+        
         echo "✅ Python installation check completed"
 
     - name: Test UV installation (inspect)
       run: |
         echo "Testing UV installation via image inspection..."
-        echo "Searching for UV in common locations:"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "uv" -type f 2>/dev/null || echo "No UV found"
-        echo "Checking if UV is available via direct execution:"
-        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest uv --version 2>&1 || echo "uv command failed"
+        
+        # 查找 UV 可执行文件
+        echo "Searching for UV executables:"
+        UV_EXECS=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "uv" -type f -executable 2>/dev/null)
+        echo "Found UV executables: $UV_EXECS"
+        
+        # 测试找到的 UV 可执行文件
+        if [ -n "$UV_EXECS" ]; then
+          for uv_exec in $UV_EXECS; do
+            echo "Testing $uv_exec:"
+            docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $uv_exec --version 2>&1 || echo "Failed to run $uv_exec"
+          done
+        else
+          echo "No UV executables found"
+        fi
+        
         echo "✅ UV installation check completed"
 
     - name: Find Python executable
@@ -236,32 +272,109 @@ jobs:
     - name: Test package availability (inspect)
       run: |
         echo "Testing package availability via image inspection..."
-        echo "Checking if we can run the container's default command:"
-        # Try running the container without overriding entrypoint
-        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version 2>&1 || echo "Default python command failed"
         
-        echo "Checking Python package availability with found executables:"
-        # Find and test Python executables
+        # 测试容器的默认命令
+        echo "Testing container default command:"
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest 2>&1 || echo "Default command test completed"
+        
+        # 查找可用的 Python 可执行文件
+        echo "Finding Python executables for package testing:"
         PYTHON_EXECUTABLES=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f -executable 2>/dev/null | head -3)
+        echo "Found Python executables: $PYTHON_EXECUTABLES"
         
-        for python_cmd in $PYTHON_EXECUTABLES; do
-          echo "Testing packages with $python_cmd:"
-          docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $python_cmd -c "
-          try:
-              import numpy
-              print('✅ NumPy available')
-          except ImportError as e:
-              print(f'❌ NumPy not available: {e}')
-          
-          try:
-              import gurobipy
-              print('✅ Gurobi available')
-          except ImportError as e:
-              print(f'❌ Gurobi not available: {e}')
-          " 2>&1 || echo "Package check failed with $python_cmd"
-        done
+        if [ -n "$PYTHON_EXECUTABLES" ]; then
+          for python_cmd in $PYTHON_EXECUTABLES; do
+            echo "Testing packages with $python_cmd:"
+            docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $python_cmd -c "
+            try:
+                import numpy
+                print('✅ NumPy available')
+            except ImportError as e:
+                print(f'❌ NumPy not available: {e}')
+            
+            try:
+                import gurobipy
+                print('✅ Gurobi available')
+            except ImportError as e:
+                print(f'❌ Gurobi not available: {e}')
+            " 2>&1 || echo "Package check failed with $python_cmd"
+          done
+        else
+          echo "❌ No Python executables found for package testing"
+        fi
         
         echo "✅ Package availability check completed"
+
+    - name: Test Gurobi specifically
+      run: |
+        echo "Testing Gurobi specifically..."
+        
+        # 检查 Gurobi 环境变量
+        echo "Checking Gurobi environment variables:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest env | grep -i gurobi || echo "No Gurobi environment variables found"
+        
+        # 检查 Gurobi 安装
+        echo "Checking Gurobi installation:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "*gurobi*" -type d 2>/dev/null | head -5 || echo "No Gurobi directories found"
+        
+        # 查找可用的 Python 可执行文件
+        echo "Finding Python executable for Gurobi test:"
+        PYTHON_EXEC=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest find / -name "python*" -type f -executable 2>/dev/null | head -1)
+        
+        if [ -n "$PYTHON_EXEC" ]; then
+          echo "Using Python executable: $PYTHON_EXEC"
+          
+          # 测试 Gurobi Python 包
+          echo "Testing Gurobi Python package:"
+          docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest $PYTHON_EXEC -c "
+          try:
+              import gurobipy as gp
+              print('✅ Gurobi Python package imported successfully')
+              print(f'✅ Gurobi version: {gp.gurobi.version()}')
+              
+              # Test basic Gurobi functionality
+              try:
+                  model = gp.Model('test')
+                  print('✅ Gurobi model creation successful')
+                  model.dispose()
+              except Exception as e:
+                  print(f'⚠️ Gurobi model creation failed (expected without license): {e}')
+                  
+          except ImportError as e:
+              print(f'❌ Gurobi Python package not available: {e}')
+          except Exception as e:
+              print(f'⚠️ Gurobi error: {e}')
+          " 2>&1 || echo "Gurobi test failed"
+        else
+          echo "❌ No Python executable found for Gurobi test"
+        fi
+        
+        echo "✅ Gurobi test completed"
+
+    - name: Comprehensive image validation
+      run: |
+        echo "Running comprehensive image validation..."
+        
+        # 测试镜像的基本可用性
+        echo "1. Testing basic image availability:"
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest echo "✅ Image is runnable" || echo "❌ Image failed to run"
+        
+        # 测试环境变量
+        echo "2. Testing environment variables:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest env | grep -E "(PYTHON|GUROBI|PATH)" || echo "No relevant environment variables found"
+        
+        # 测试文件系统结构
+        echo "3. Testing filesystem structure:"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest ls -la /app || echo "No /app directory"
+        docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest ls -la /home || echo "No /home directory"
+        
+        # 测试安全配置
+        echo "4. Testing security configuration:"
+        echo "User: $(docker inspect --format='{{.Config.User}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "ReadOnlyRootfs: $(docker inspect --format='{{.Config.ReadOnlyRootfs}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Privileged: $(docker inspect --format='{{.Config.Privileged}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        
+        echo "✅ Comprehensive validation completed"
 
   generate-summary:
     runs-on: ubuntu-latest

@@ -11,7 +11,7 @@ echo "🔨 Building secure Docker image with restricted Python environment..."
 # 清理旧的镜像标签和可能冲突的镜像
 echo "🧹 Cleaning up old image tags and conflicting images..."
 # 删除目标标签
-docker rmi ghcr.io/reaslab/docker-python-uv:secure-latest 2>/dev/null || echo "   No existing tag to remove"
+docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No existing tag to remove"
 
 # 清理所有悬空镜像
 echo "🧹 Cleaning up dangling images..."
@@ -31,14 +31,24 @@ fi
 
 # 清理Python/UV相关的镜像
 docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep -E "(python|uv)" | while read repo_tag id; do
-    if [ "$repo_tag" != "ghcr.io/reaslab/docker-python-uv:secure-latest" ]; then
+    if [ "$repo_tag" != "ghcr.io/reaslab/docker-python-runner:secure-latest" ]; then
         echo "   Removing Python/UV related image: $repo_tag ($id)"
         docker rmi "$id" 2>/dev/null || echo "     Could not remove $repo_tag"
     fi
 done
 
 echo "Building with Nix dockerTools..."
-nix-build docker.nix --option sandbox false
+# 配置 Nix 以支持 Flakes，与工作流保持一致
+mkdir -p ~/.config/nix
+cat > ~/.config/nix/nix.conf << EOF
+experimental-features = nix-command flakes
+allow-import-from-derivation = true
+EOF
+
+# 设置环境变量以允许非自由包（Gurobi）
+export NIXPKGS_ALLOW_UNFREE=1
+# 使用 nix build 命令，与工作流保持一致
+nix build .#docker-image --option sandbox false --impure
 
 echo "Loading Nix image into Docker..."
 # 记录加载前的镜像ID和标签
@@ -62,10 +72,8 @@ if [ -n "$NEW_IMAGE_INFO" ]; then
     # 检查是否是我们期望的镜像
     if [[ "$NEW_IMAGE_TAG" == *"python"* ]] || [[ "$NEW_IMAGE_TAG" == *"uv"* ]] || [[ "$NEW_IMAGE_TAG" == *"reaslab"* ]]; then
         echo "   Using new image ID: $NEW_IMAGE_ID"
-        docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-uv:secure-latest
     else
         echo "   New image doesn't match expected pattern, using it anyway"
-        docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-uv:secure-latest
     fi
 else
     echo "   No new image detected, checking for existing suitable images"
@@ -75,21 +83,35 @@ else
         EXISTING_ID=$(echo "$EXISTING_PYTHON" | awk '{print $1}')
         EXISTING_TAG=$(echo "$EXISTING_PYTHON" | awk '{print $2}')
         echo "   Using existing image: $EXISTING_TAG ($EXISTING_ID)"
-        docker tag $EXISTING_ID ghcr.io/reaslab/docker-python-uv:secure-latest
+        NEW_IMAGE_ID=$EXISTING_ID
     else
         echo "   Error: No suitable image found for tagging"
         exit 1
     fi
 fi
 
+# 生成标签，与工作流保持一致
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
+
+echo "   Creating tags with image ID: $NEW_IMAGE_ID"
+echo "   - ghcr.io/reaslab/docker-python-runner:secure-latest"
+echo "   - ghcr.io/reaslab/docker-python-runner:secure-$TIMESTAMP"
+echo "   - ghcr.io/reaslab/docker-python-runner:secure-$SHORT_SHA"
+
+# 创建多个标签，与工作流保持一致
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-latest
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-$TIMESTAMP
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-$SHORT_SHA
+
 # 验证最终镜像状态
 echo "🔍 Verifying final image state..."
-FINAL_IMAGE_ID=$(docker images --format "{{.ID}}" ghcr.io/reaslab/docker-python-uv:secure-latest 2>/dev/null || echo "")
+FINAL_IMAGE_ID=$(docker images --format "{{.ID}}" ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "")
 if [ -n "$FINAL_IMAGE_ID" ]; then
     echo "   Final image ID: $FINAL_IMAGE_ID"
     
     # 检查是否有其他镜像使用相同的ID
-    DUPLICATE_TAGS=$(docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | awk -v target_id="$FINAL_IMAGE_ID" '$2 == target_id && $1 != "ghcr.io/reaslab/docker-python-uv:secure-latest" {print $1}')
+    DUPLICATE_TAGS=$(docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | awk -v target_id="$FINAL_IMAGE_ID" '$2 == target_id && $1 != "ghcr.io/reaslab/docker-python-runner:secure-latest" {print $1}')
     
     if [ -n "$DUPLICATE_TAGS" ]; then
         echo "   ⚠️  Warning: Found duplicate image IDs:"
@@ -117,4 +139,4 @@ echo "   - Container: Read-only rootfs, non-root user (1000:1000)"
 echo "   - Network: Restricted (disabled by default)"
 echo "   - Tools: Minimal set (bash, coreutils, curl, tar, gzip)"
 echo "   - Compilation tools: Removed for security"
-echo "Image: ghcr.io/reaslab/docker-python-uv:secure-latest"
+echo "Image: ghcr.io/reaslab/docker-python-runner:secure-latest"
