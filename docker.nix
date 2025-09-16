@@ -40,7 +40,7 @@ let
     export PYTHONPATH="/app:/usr/lib/python3.12/site-packages"
     
     # Restrict system tool access
-    export PATH="${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
     unset HOME
@@ -222,7 +222,7 @@ finally:
     export https_proxy=""
     
     # Restrict system tool access
-    export PATH="${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
     unset HOME
