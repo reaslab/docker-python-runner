@@ -40,7 +40,7 @@ let
     export PYTHONPATH="/app:/usr/lib/python3.12/site-packages"
     
     # Restrict system tool access
-    export PATH="/usr/local/bin:/usr/bin"
+    export PATH="${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
     unset HOME
@@ -222,7 +222,7 @@ finally:
     export https_proxy=""
     
     # Restrict system tool access
-    export PATH="/usr/local/bin:/usr/bin"
+    export PATH="${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
     unset HOME
@@ -411,7 +411,7 @@ in
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
         # Set PATH to include our secure commands
-        "PATH=${runtimeEnv}/bin:/usr/local/bin:/usr/bin"
+        "PATH=${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
         # Gurobi environment variables (using gurobi package from nixpkgs)
