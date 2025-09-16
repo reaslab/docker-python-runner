@@ -39,7 +39,7 @@ let
     # Set restricted sys.path, only allow access to safe packages
     export PYTHONPATH="/app:/usr/lib/python3.12/site-packages"
     
-    # Restrict system tool access
+    # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
@@ -221,7 +221,7 @@ finally:
     export http_proxy=""
     export https_proxy=""
     
-    # Restrict system tool access
+    # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
@@ -260,7 +260,7 @@ finally:
       # Basic system tools (minimal)
       pkgs.bash
       pkgs.coreutils
-      # Essential commands for container management
+      # Essential commands for container management - ensure util-linux is included
       pkgs.util-linux  # Provides tail, head, etc.
       
       # Network tools (needed for uv to download packages)
@@ -388,7 +388,7 @@ in
       tag = "minimal";
       copyToRoot = pkgs.buildEnv {
         name = "base-root";
-        paths = [ pkgs.bash pkgs.coreutils pkgs.glibc ];
+        paths = [ pkgs.bash pkgs.coreutils pkgs.glibc pkgs.util-linux ];
       };
       config = {
         Cmd = [ "bash" ];
@@ -410,7 +410,7 @@ in
         # Force uv to use system Python
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
-        # Set PATH to include our secure commands
+        # Set PATH to include our secure commands - ensure util-linux tools are accessible
         "PATH=${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
