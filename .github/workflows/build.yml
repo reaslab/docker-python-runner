@@ -82,16 +82,6 @@ jobs:
         # 使用 nix build 的结果加载 Docker 镜像
         docker load < result
 
-    - name: Extract metadata
-      id: meta
-      if: github.event.inputs.push_images != 'false'
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=raw,value=secure-latest
-          type=raw,value=secure-{{date 'YYYYMMDD-HHmmss'}}
-          type=sha,prefix=secure-,format=short
 
     - name: Tag Docker image
       if: github.event.inputs.push_images != 'false'
@@ -100,19 +90,38 @@ jobs:
         IMAGE_ID=$(docker images --format "{{.ID}}" | head -1)
         echo "Image ID: $IMAGE_ID"
         
-        # Tag with all metadata tags
-        for tag in ${{ steps.meta.outputs.tags }}; do
+        # Create tags array to avoid shell parsing issues
+        TAGS=(
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest"
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)"
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}"
+        )
+        
+        # Tag with all tags
+        for tag in "${TAGS[@]}"; do
           echo "Tagging with: $tag"
-          docker tag $IMAGE_ID $tag
+          docker tag "$IMAGE_ID" "$tag"
         done
+        
+        echo "All tags created successfully"
 
     - name: Push Docker image
       if: github.event.inputs.push_images != 'false'
       run: |
-        for tag in ${{ steps.meta.outputs.tags }}; do
+        # Create tags array (same as tagging step)
+        TAGS=(
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest"
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-$(date +%Y%m%d-%H%M%S)"
+          "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}"
+        )
+        
+        # Push all tags
+        for tag in "${TAGS[@]}"; do
           echo "Pushing: $tag"
-          docker push $tag
+          docker push "$tag"
         done
+        
+        echo "All tags pushed successfully"
 
     - name: Run security scan
       if: github.event.inputs.push_images != 'false'
