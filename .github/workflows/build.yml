@@ -204,6 +204,15 @@ jobs:
             exit 1
           fi
           
+          # 优先查找我们的镜像，而不是第一个镜像
+          OUR_IMAGE_ID=\$(docker images --format '{{.ID}} {{.Repository}}' | grep -E '(reaslab|docker-python-runner)' | head -1 | awk '{print \$1}')
+          if [ -n \"\$OUR_IMAGE_ID\" ]; then
+            IMAGE_ID=\"\$OUR_IMAGE_ID\"
+            echo \"Found our image ID: \$IMAGE_ID\"
+          else
+            echo \"Using first available image ID: \$IMAGE_ID\"
+          fi
+          
           echo \"Using image ID: \$IMAGE_ID\"
           
           # 创建标签数组
@@ -248,6 +257,10 @@ jobs:
         # 在 Nix 开发环境中推送 Docker 镜像
         echo "🚀 Pushing Docker image..."
         nix develop --command bash -c "
+          # 确保我们推送的是正确的镜像
+          echo 'Current Docker images before push:'
+          docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}'
+          
           # 创建标签数组（与标记步骤相同）
           TAGS=()
           
