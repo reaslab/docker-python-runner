@@ -1,4 +1,4 @@
-# docker-python-uv
+# docker-python-runner
 
 A secure, production-ready Docker environment for Python development with UV package manager, built with Nix for maximum security and reproducibility.
 
@@ -17,14 +17,14 @@ A secure, production-ready Docker environment for Python development with UV pac
 
 ### Using Prebuilt Images
 
-Prebuilt images are available on [GitHub Container Registry](https://github.com/reaslab/docker-python-uv/pkgs/container/docker-python-uv):
+Prebuilt images are available on [GitHub Container Registry](https://github.com/reaslab/docker-python-runner/pkgs/container/docker-python-runner):
 
 ```bash
 # Pull the latest secure image
-docker pull ghcr.io/reaslab/docker-python-uv:secure-latest
+docker pull ghcr.io/reaslab/docker-python-runner:secure-latest
 
 # Run a Python container
-docker run --rm -it ghcr.io/reaslab/docker-python-uv:secure-latest python --version
+docker run --rm -it ghcr.io/reaslab/docker-python-runner:secure-latest python --version
 ```
 
 ### Available Tags
@@ -32,6 +32,8 @@ docker run --rm -it ghcr.io/reaslab/docker-python-uv:secure-latest python --vers
 | Image Tag | Description |
 |-----------|-------------|
 | `secure-latest` | Latest secure Python 3.12 with UV and Gurobi |
+| `secure-{timestamp}` | Timestamped version (e.g., `secure-20250115-143022`) |
+| `secure-{sha}` | Git commit SHA version (e.g., `secure-a1b2c3d`) |
 
 ## Usage
 
@@ -39,26 +41,26 @@ docker run --rm -it ghcr.io/reaslab/docker-python-uv:secure-latest python --vers
 
 ```bash
 # Run Python code
-docker run --rm ghcr.io/reaslab/docker-python-uv:secure-latest python -c "print('Hello, World!')"
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python -c "print('Hello, World!')"
 
 # Interactive shell
-docker run --rm -it ghcr.io/reaslab/docker-python-uv:secure-latest bash
+docker run --rm -it ghcr.io/reaslab/docker-python-runner:secure-latest bash
 
 # Run with volume mount
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-uv:secure-latest python /app/script.py
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest python /app/script.py
 ```
 
 ### With UV Package Manager
 
 ```bash
 # Create a new project
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-uv:secure-latest uv init my-project
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv init my-project
 
 # Install packages
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-uv:secure-latest uv add numpy pandas
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv add numpy pandas
 
 # Run with dependencies
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-uv:secure-latest uv run python script.py
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv run python script.py
 ```
 
 ### With Gurobi Optimization
@@ -72,7 +74,7 @@ docker run --rm \
   -v $(pwd):/app \
   -v /path/to/gurobi.lic:/app/gurobi.lic:ro \
   -e GRB_LICENSE_FILE=/app/gurobi.lic \
-  ghcr.io/reaslab/docker-python-uv:secure-latest python optimization.py
+  ghcr.io/reaslab/docker-python-runner:secure-latest python optimization.py
 ```
 
 ## Security Features
@@ -112,8 +114,8 @@ docker run --rm \
 
 ```bash
 # Clone the repository
-git clone https://github.com/reaslab/docker-python-uv.git
-cd docker-python-uv
+git clone https://github.com/reaslab/docker-python-runner.git
+cd docker-python-runner
 
 # Build using Nix
 nix-build docker.nix --option sandbox false
@@ -122,7 +124,7 @@ nix-build docker.nix --option sandbox false
 docker load < result
 
 # Tag the image
-docker tag <image-id> ghcr.io/reaslab/docker-python-uv:secure-latest
+docker tag <image-id> ghcr.io/reaslab/docker-python-runner:secure-latest
 ```
 
 ### Using Build Script
@@ -140,30 +142,33 @@ docker tag <image-id> ghcr.io/reaslab/docker-python-uv:secure-latest
 
 ### CI/CD Workflow
 
-The Docker image is automatically built and pushed using **Fedora** runners when:
+The Docker image is automatically built and pushed using **Ubuntu** runners when:
 
 - **Code Push**: Pushing to `main` branch
 - **Pull Request**: Creating/updating PRs to `main` branch
 - **Scheduled**: Every Monday at 2 AM UTC
 - **Manual**: Triggered manually via GitHub Actions UI
 
-**Build Environment**: Fedora Linux with Nix package manager for reproducible builds.
-**Image Tag**: Always tagged as `secure-latest` for consistency.
+**Build Environment**: Ubuntu Linux with Nix Flakes for reproducible builds.
+**Image Tags**: 
+- `secure-latest` - Latest stable version
+- `secure-{timestamp}` - Timestamped version
+- `secure-{sha}` - Git commit SHA version
 
 ### Testing
 
 ```bash
 # Test Python version
-docker run --rm ghcr.io/reaslab/docker-python-uv:secure-latest python --version
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python --version
 
 # Test UV installation
-docker run --rm ghcr.io/reaslab/docker-python-uv:secure-latest uv --version
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest uv --version
 
 # Test Gurobi (requires license)
-docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-uv:secure-latest python -c "import gurobipy; print('Gurobi available')"
+docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-runner:secure-latest python -c "import gurobipy; print('Gurobi available')"
 
 # Test security restrictions
-docker run --rm ghcr.io/reaslab/docker-python-uv:secure-latest python -c "
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
 try:
     import os
     print('ERROR: os module should be restricted')
@@ -195,6 +200,6 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Support
 
-- [Issues](https://github.com/reaslab/docker-python-uv/issues)
-- [Discussions](https://github.com/reaslab/docker-python-uv/discussions)
-- [Documentation](https://github.com/reaslab/docker-python-uv/wiki)
+- [Issues](https://github.com/reaslab/docker-python-runner/issues)
+- [Discussions](https://github.com/reaslab/docker-python-runner/discussions)
+- [Documentation](https://github.com/reaslab/docker-python-runner/wiki)

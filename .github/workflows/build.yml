@@ -132,6 +132,47 @@ jobs:
         output: 'trivy-results.sarif'
       continue-on-error: true
 
+    - name: Install jq for SARIF parsing
+      if: github.event.inputs.push_images != 'false'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+
+    - name: Display local security scan results
+      if: github.event.inputs.push_images != 'false' && always()
+      run: |
+        echo "## 🔍 Local Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "trivy-results.sarif" ]; then
+          echo "✅ Trivy security scan completed successfully" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract vulnerability count
+          VULNERABILITIES=$(jq '.runs[0].results | length' trivy-results.sarif 2>/dev/null || echo "0")
+          echo "- **Vulnerabilities found:** $VULNERABILITIES" >> $GITHUB_STEP_SUMMARY
+          
+          # Show high/critical vulnerabilities
+          HIGH_CRITICAL=$(jq '.runs[0].results[] | select(.level == "error" or .level == "warning") | .level' trivy-results.sarif 2>/dev/null | wc -l || echo "0")
+          echo "- **High/Critical issues:** $HIGH_CRITICAL" >> $GITHUB_STEP_SUMMARY
+          
+          # Show scan summary
+          echo "### 📊 Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image scanned:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scan format:** SARIF" >> $GITHUB_STEP_SUMMARY
+          echo "- **Results file:** \`trivy-results.sarif\`" >> $GITHUB_STEP_SUMMARY
+          
+          # Show some sample vulnerabilities if any
+          if [ "$VULNERABILITIES" -gt 0 ]; then
+            echo "### 🚨 Sample Vulnerabilities" >> $GITHUB_STEP_SUMMARY
+            jq -r '.runs[0].results[0:3][] | "- **\(.level)**: \(.message.text)"' trivy-results.sarif 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Unable to parse vulnerability details" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ No vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            echo "The Docker image appears to be secure!" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "⚠️ Security scan results not available" >> $GITHUB_STEP_SUMMARY
+          echo "The Trivy scan may have failed or the results file was not generated." >> $GITHUB_STEP_SUMMARY
+        fi
+
     - name: Upload Trivy scan results
       if: github.event.inputs.push_images != 'false' && github.ref == 'refs/heads/main'
       uses: github/codeql-action/upload-sarif@v3
@@ -139,15 +180,33 @@ jobs:
         sarif_file: 'trivy-results.sarif'
       continue-on-error: true
 
-    - name: Display security scan results (fallback)
+    - name: Display security scan results
       if: github.event.inputs.push_images != 'false' && always()
       run: |
         echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        
+        # Check if Advanced Security is available
         if [ -f "trivy-results.sarif" ]; then
           echo "✅ Security scan completed successfully" >> $GITHUB_STEP_SUMMARY
           echo "📊 Scan results saved to trivy-results.sarif" >> $GITHUB_STEP_SUMMARY
+          
+          # Display scan summary
+          echo "### 📋 Scan Summary" >> $GITHUB_STEP_SUMMARY
+          if command -v jq >/dev/null 2>&1; then
+            VULNERABILITIES=$(jq '.runs[0].results | length' trivy-results.sarif 2>/dev/null || echo "0")
+            echo "- **Vulnerabilities found:** $VULNERABILITIES" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "### 📄 Full Report" >> $GITHUB_STEP_SUMMARY
+          echo "Detailed scan results are available in the SARIF file." >> $GITHUB_STEP_SUMMARY
         else
           echo "⚠️ Security scan results not available" >> $GITHUB_STEP_SUMMARY
+          echo "This may be due to:" >> $GITHUB_STEP_SUMMARY
+          echo "- Advanced Security not enabled for this repository" >> $GITHUB_STEP_SUMMARY
+          echo "- Scan failed to complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** Code scanning requires GitHub Advanced Security (paid feature)." >> $GITHUB_STEP_SUMMARY
+          echo "The Trivy scan still runs locally and results are available in the workflow logs." >> $GITHUB_STEP_SUMMARY
         fi
 
   test:
@@ -411,5 +470,10 @@ jobs:
         echo "- ✅ Scientific computing packages" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Non-root user execution" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Resource limits and security restrictions" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Security:**" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Trivy vulnerability scanning" >> $GITHUB_STEP_SUMMARY
+        echo "- ⚠️ Code scanning requires GitHub Advanced Security (paid feature)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Local security scan results available in workflow logs" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Registry:** [GitHub Container Registry](https://github.com/orgs/reaslab/packages)" >> $GITHUB_STEP_SUMMARY
