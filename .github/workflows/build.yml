@@ -75,15 +75,22 @@ jobs:
         # 清理可能冲突的镜像
         docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No existing image to remove"
 
-    - name: Build Docker image with Nix Flakes
+    - name: Setup Nix Flake environment
       run: |
         # 加载 Nix 环境
         . /home/runner/.nix-profile/etc/profile.d/nix.sh
+        
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
-        # 使用 nix flake 构建，利用 flake.nix 中定义的环境
-        # 强制重新构建以确保干净的构建环境
-        nix build .#docker-image --option sandbox false --impure --rebuild
+        
+        # 进入 Nix 开发环境并构建
+        echo "🔧 Setting up Nix Flake environment..."
+        nix develop --command bash -c "
+          echo '🐍 Building Python Docker image with Nix Flakes...'
+          # 使用与本地构建相同的方式
+          nix build .#docker-image --option sandbox false --impure --rebuild
+          echo '✅ Build completed successfully'
+        "
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
