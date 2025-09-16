@@ -20,22 +20,20 @@
         formatter = pkgs.alejandra;
         
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            # Nix development tools
-            alejandra
-            nixpkgs-fmt
-            
-            # Docker tools
-            dockerTools
-            
-            # Python development tools
-            python312
-            uv
-            
-            # Build tools
+          buildInputs = with pkgs; [
+            # Basic tools
+            bash
+            coreutils
+            curl
             gnutar
             gzip
-            curl
+            
+            # Nix tools
+            alejandra
+            
+            # Python tools
+            python312
+            uv
           ];
           
           shellHook = ''
