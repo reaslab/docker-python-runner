@@ -90,6 +90,14 @@ jobs:
           # 使用与本地构建相同的方式
           nix build .#docker-image --option sandbox false --impure --rebuild
           echo '✅ Build completed successfully'
+          # 验证构建结果
+          if [ -L result ]; then
+            echo '✅ Result symlink created successfully'
+            ls -la result
+          else
+            echo '❌ Result symlink not found'
+            exit 1
+          fi
         "
 
     - name: Set up Docker Buildx
@@ -105,8 +113,26 @@ jobs:
 
     - name: Load Docker image
       run: |
-        # 使用 nix build 的结果加载 Docker 镜像
-        docker load < result
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
+        
+        # 设置环境变量以允许非自由包（Gurobi）
+        export NIXPKGS_ALLOW_UNFREE=1
+        
+        # 在 Nix 开发环境中加载 Docker 镜像
+        echo "🐳 Loading Docker image from Nix build result..."
+        nix develop --command bash -c "
+          if [ -L result ]; then
+            echo '✅ Result symlink found, loading Docker image...'
+            docker load < result
+            echo '✅ Docker image loaded successfully'
+          else
+            echo '❌ Result symlink not found, rebuilding...'
+            nix build .#docker-image --option sandbox false --impure --rebuild
+            docker load < result
+            echo '✅ Docker image rebuilt and loaded successfully'
+          fi
+        "
 
 
     - name: Tag Docker image
