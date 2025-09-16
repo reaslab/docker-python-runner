@@ -260,6 +260,8 @@ finally:
       # Basic system tools (minimal)
       pkgs.bash
       pkgs.coreutils
+      # Essential commands for container management
+      pkgs.util-linux  # Provides tail, head, etc.
       
       # Network tools (needed for uv to download packages)
       # Note: curl has security risks, but needed for uv to download packages
@@ -432,8 +434,8 @@ in
         "LOGNAME=python-user"
         "MAIL="
       ];
-      # Use secure Python interpreter
-      Cmd = [ "${pythonWithPackages}/bin/python3.12" "-c" "print('Python secure environment ready')" ];
+      # Use tail -f /dev/null for container management (keeps container running)
+      Cmd = [ "tail" "-f" "/dev/null" ];
       # Set security parameters - use non-root user
       User = "1000:1000";
       # Additional security settings
