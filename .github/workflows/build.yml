@@ -56,6 +56,25 @@ jobs:
         # 验证配置
         nix --version
 
+    - name: Clean build environment
+      run: |
+        # 加载 Nix 环境
+        . /home/runner/.nix-profile/etc/profile.d/nix.sh
+        
+        # 清理 Nix 缓存
+        echo "🧹 Cleaning Nix cache..."
+        nix-collect-garbage
+        nix store gc
+        
+        # 清理 Docker 环境
+        echo "🧹 Cleaning Docker environment..."
+        docker image prune -f
+        docker container prune -f
+        docker builder prune -f
+        
+        # 清理可能冲突的镜像
+        docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No existing image to remove"
+
     - name: Build Docker image with Nix Flakes
       run: |
         # 加载 Nix 环境
@@ -63,8 +82,8 @@ jobs:
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         # 使用 nix flake 构建，利用 flake.nix 中定义的环境
-        # 启用缓存以提高构建速度
-        nix build .#docker-image --option sandbox false --impure
+        # 强制重新构建以确保干净的构建环境
+        nix build .#docker-image --option sandbox false --impure --rebuild
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -275,10 +294,10 @@ jobs:
         
         # 测试Python和UV（使用临时文件系统挂载）
         echo "Testing Python:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest python --version || echo "Python not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "export PATH=\${PATH} && python --version" || echo "Python not found"
         
         echo "Testing UV:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest uv --version || echo "UV not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "export PATH=\${PATH} && uv --version" || echo "UV not found"
         
         echo "✅ All tests completed successfully"
 

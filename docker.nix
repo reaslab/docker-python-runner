@@ -357,6 +357,20 @@ in
     name = "ghcr.io/reaslab/docker-python-runner";
     tag = "secure-latest";
     
+    # Use a minimal base image instead of creating from scratch
+    fromImage = pkgs.dockerTools.buildImage {
+      name = "python-base";
+      tag = "minimal";
+      copyToRoot = pkgs.buildEnv {
+        name = "base-root";
+        paths = [ pkgs.bash pkgs.coreutils pkgs.glibc ];
+      };
+      config = {
+        Cmd = [ "bash" ];
+        Env = [ "PATH=/usr/local/bin:/usr/bin" ];
+      };
+    };
+    
     copyToRoot = pkgs.buildEnv {
       name = "image-root";
       paths = [ runtimeEnv dockerSetup pkgs.cacert ];
