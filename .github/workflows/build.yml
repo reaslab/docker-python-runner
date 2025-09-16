@@ -87,15 +87,48 @@ jobs:
         echo "🔧 Setting up Nix Flake environment..."
         nix develop --command bash -c "
           echo '🐍 Building Python Docker image with Nix Flakes...'
-          # 使用与本地构建相同的方式
-          nix build .#docker-image --option sandbox false --impure --rebuild
-          echo '✅ Build completed successfully'
+          echo 'Current directory:'
+          pwd
+          echo 'Available files:'
+          ls -la
+          
+          # 设置更宽松的构建选项
+          export NIX_BUILD_CORES=0
+          export NIX_CONF_DIR=/tmp/nix-conf
+          mkdir -p \$NIX_CONF_DIR
+          
+          # 使用与本地构建相同的方式，添加详细输出
+          echo 'Starting build with detailed output...'
+          nix build .#docker-image --option sandbox false --impure --rebuild --show-trace --verbose || {
+            echo '❌ First build attempt failed, trying with different options...'
+            # 尝试不同的构建选项
+            nix build .#docker-image --option sandbox false --impure --rebuild --option max-jobs 1 --option cores 1 || {
+              echo '❌ Second build attempt failed, trying without rebuild...'
+              nix build .#docker-image --option sandbox false --impure --option max-jobs 1 --option cores 1
+            }
+          }
+          
+          echo 'Build command completed, checking results...'
+          
+          # 检查构建结果
+          echo '🔍 Checking build results...'
+          ls -la
+          
           # 验证构建结果
           if [ -L result ]; then
             echo '✅ Result symlink created successfully'
             ls -la result
+            echo 'Result points to:'
+            readlink result
+            echo 'File exists and is readable:'
+            test -r result && echo 'Yes' || echo 'No'
           else
-            echo '❌ Result symlink not found'
+            echo '❌ Result symlink not found, checking for other outputs...'
+            # 查找可能的输出文件
+            find . -name '*.tar.gz' -o -name 'docker-image*' 2>/dev/null || echo 'No tar.gz files found'
+            # 检查 Nix store 中的构建结果
+            echo 'Checking Nix store for build results...'
+            nix-store --query --outputs \$(nix-instantiate .#docker-image) 2>/dev/null || echo 'No outputs found in store'
             exit 1
           fi
         "
