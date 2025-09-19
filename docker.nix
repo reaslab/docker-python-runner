@@ -275,6 +275,10 @@ finally:
       # Gurobi dependency math libraries
       pkgs.lapack
       pkgs.blas
+
+      # C++ standard library (needed for numpy and other C extensions)
+      pkgs.gcc.cc.lib
+      pkgs.stdenv.cc.cc.lib
     ];
     # Avoid duplicate package issues
     ignoreCollisions = true;
