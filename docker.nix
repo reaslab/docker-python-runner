@@ -32,17 +32,22 @@ let
     name = "writable-python";
     buildCommand = ''
       mkdir -p $out/bin
-      mkdir -p $out/lib/python3.12/site-packages
+      mkdir -p $out/lib/python3.12
       
       # Copy Python executable from Nix store
       cp ${pythonWithPackages}/bin/python3.12 $out/bin/python3.12
       cp ${pythonWithPackages}/bin/python3 $out/bin/python3
       cp ${pythonWithPackages}/bin/python $out/bin/python
       
-      # Create symlinks for Python libraries
-      ln -sf ${pythonWithPackages}/lib/python3.12/* $out/lib/python3.12/
+      # Create symlinks for Python libraries, excluding site-packages
+      for item in ${pythonWithPackages}/lib/python3.12/*; do
+        if [ "$(basename "$item")" != "site-packages" ]; then
+          ln -sf "$item" $out/lib/python3.12/
+        fi
+      done
       
-      # Make the site-packages directory writable
+      # Create a writable site-packages directory
+      mkdir -p $out/lib/python3.12/site-packages
       chmod -R 755 $out/lib/python3.12/site-packages
     '';
   };
