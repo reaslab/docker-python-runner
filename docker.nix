@@ -27,6 +27,26 @@ let
     # Does not include dangerous modules like os, subprocess, sys
   ]);
 
+  # Create a writable Python installation
+  writablePython = pkgs.stdenv.mkDerivation {
+    name = "writable-python";
+    buildCommand = ''
+      mkdir -p $out/bin
+      mkdir -p $out/lib/python3.12/site-packages
+      
+      # Copy Python executable from Nix store
+      cp ${pythonWithPackages}/bin/python3.12 $out/bin/python3.12
+      cp ${pythonWithPackages}/bin/python3 $out/bin/python3
+      cp ${pythonWithPackages}/bin/python $out/bin/python
+      
+      # Create symlinks for Python libraries
+      ln -sf ${pythonWithPackages}/lib/python3.12/* $out/lib/python3.12/
+      
+      # Make the site-packages directory writable
+      chmod -R 755 $out/lib/python3.12/site-packages
+    '';
+  };
+
   # Create restricted Python interpreter startup script
   securePythonScript = pkgs.writeScriptBin "python" ''
     #!${pkgs.bash}/bin/bash
@@ -37,7 +57,7 @@ let
     export PYTHONDONTWRITEBYTECODE=1
     
     # Set restricted sys.path, only allow access to safe packages
-    export PYTHONPATH="/app:/usr/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/usr/local/lib/python3.12/site-packages"
     
     # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
@@ -101,8 +121,8 @@ builtins.input = safe_input
 # Execute user code
 PYEOF
 
-    # Start restricted Python interpreter
-    exec ${pythonWithPackages}/bin/python3.12 -S -c "
+    # Start restricted Python interpreter using writable Python
+    exec ${writablePython}/bin/python3.12 -S -c "
 import sys
 import builtins
 
@@ -186,14 +206,14 @@ elif len(sys.argv) == 2 and sys.argv[1] == '--version':
     print(f'Python {sys.version.split()[0]}')
 elif len(sys.argv) == 2 and sys.argv[1].startswith('-'):
     # Handle other flags like -c, -m, etc.
-    exec('${pythonWithPackages}/bin/python3.12 "$@"')
+    exec('${writablePython}/bin/python3.12 "$@"')
 else:
     # Execute file or code
     try:
         if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
             exec(open(sys.argv[1]).read())
         else:
-            exec('${pythonWithPackages}/bin/python3.12 "$@"')
+            exec('${writablePython}/bin/python3.12 "$@"')
     except Exception as e:
         print(f'Error: {e}', file=sys.stderr)
         sys.exit(1)
@@ -243,6 +263,7 @@ finally:
     paths = [
       # Include Python with gurobipy pre-installed
       pythonWithGurobipy
+      writablePython  # Add writable Python installation
       securePythonScript  # Add secure Python script
       secureUvScript
       pkgs.gurobi  # Direct use of gurobi package from nixpkgs (12.0.3)
@@ -401,7 +422,7 @@ in
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
         # Set PATH to include our secure commands - ensure util-linux tools are accessible
-        "PATH=${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+        "PATH=${writablePython}/bin:${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
         # Gurobi environment variables (using gurobi package from nixpkgs)
