@@ -66,6 +66,9 @@ let
     # Create writable site-packages directory if it doesn't exist
     mkdir -p /usr/local/lib/python3.12/site-packages
     
+    # Ensure the directory is writable and has correct permissions
+    chmod 755 /usr/local/lib/python3.12/site-packages
+    
     # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
@@ -241,6 +244,9 @@ finally:
     # Force uv to use system Python
     export UV_PYTHON_PREFERENCE="system"
     export UV_LINK_MODE="copy"
+    
+    # Configure uv to install packages to writable directory
+    export UV_PYTHON_SITE_PACKAGES="/usr/local/lib/python3.12/site-packages"
     
     # Restrict network access - only allow HTTPS
     export HTTP_PROXY=""
@@ -429,6 +435,7 @@ in
         # Force uv to use system Python
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
+        "UV_PYTHON_SITE_PACKAGES=/usr/local/lib/python3.12/site-packages"
         # Set PATH to include our secure commands - ensure util-linux tools are accessible
         "PATH=${writablePython}/bin:${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
