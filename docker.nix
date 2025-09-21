@@ -46,9 +46,8 @@ let
         fi
       done
       
-      # Create a writable site-packages directory
-      mkdir -p $out/lib/python3.12/site-packages
-      chmod -R 755 $out/lib/python3.12/site-packages
+      # Create a symlink to the original site-packages for reading
+      ln -sf ${pythonWithPackages}/lib/python3.12/site-packages $out/lib/python3.12/site-packages
     '';
   };
 
@@ -63,6 +62,9 @@ let
     
     # Set restricted sys.path, only allow access to safe packages
     export PYTHONPATH="/app:/usr/local/lib/python3.12/site-packages"
+    
+    # Create writable site-packages directory if it doesn't exist
+    mkdir -p /usr/local/lib/python3.12/site-packages
     
     # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
@@ -322,6 +324,7 @@ finally:
       mkdir -p $out/etc/passwd.d
       mkdir -p $out/etc/group.d
       mkdir -p $out/etc/shadow.d
+      mkdir -p $out/usr/local/lib/python3.12/site-packages
       
       # Create uv configuration
       cat > $out/etc/uv/uv.toml << 'EOF'
