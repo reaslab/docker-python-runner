@@ -83,6 +83,11 @@ jobs:
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         
+        # 生成当前UTC时间戳
+        CURRENT_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        echo "Setting Docker image timestamp to: $CURRENT_TIMESTAMP"
+        export DOCKER_IMAGE_TIMESTAMP="$CURRENT_TIMESTAMP"
+        
         # 进入 Nix 开发环境并构建
         echo "🔧 Setting up Nix Flake environment..."
         nix develop --command bash -c "

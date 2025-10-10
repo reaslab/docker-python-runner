@@ -91,6 +91,8 @@ docker run --rm \
 
 - **Core**: pip, setuptools, wheel
 - **Scientific**: numpy, scipy, pandas, matplotlib, scikit-learn
+- **Visualization**: seaborn
+- **Financial**: yfinance
 - **Optimization**: gurobipy (Gurobi 12.0.3)
 - **Build Tools**: cython
 - **Package Manager**: uv

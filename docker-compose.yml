@@ -14,7 +14,7 @@ services:
       - ./gurobi.lic:/app/gurobi.lic:ro
     environment:
       - GRB_LICENSE_FILE=/app/gurobi.lic
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages
     working_dir: /app
     command: tail -f /dev/null
     # Security settings
@@ -27,10 +27,11 @@ services:
       - SETGID
       - SETUID
     tmpfs:
-      - /tmp:noexec,nosuid,size=100m
-      - /.cache:noexec,nosuid,size=1g,uid=1000,gid=1000,mode=755
-      - /.local:nosuid,size=500m,uid=1000,gid=1000,mode=755
-      - /.local/share:nosuid,size=1g,uid=1000,gid=1000,mode=755
+      - /tmp:nosuid,size=2g,uid=1000,gid=1000,mode=755
+      - /.cache:nosuid,size=1g,uid=1000,gid=1000,mode=755
+      - /.local:nosuid,size=1g,uid=1000,gid=1000,mode=755
+      - /.local/share:nosuid,size=512m,uid=1000,gid=1000,mode=755
+      - /.uv_cache:nosuid,size=1g,uid=1000,gid=1000,mode=755
     networks:
       - python-network
 
@@ -42,11 +43,17 @@ services:
       - ./gurobi.lic:/app/gurobi.lic:ro
     environment:
       - GRB_LICENSE_FILE=/app/gurobi.lic
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages
     working_dir: /app
     command: bash
     # Development mode - less restrictive
     user: "1000:1000"
+    tmpfs:
+      - /tmp:nosuid,size=2g,uid=1000,gid=1000,mode=755
+      - /.cache:nosuid,size=1g,uid=1000,gid=1000,mode=755
+      - /.local:nosuid,size=1g,uid=1000,gid=1000,mode=755
+      - /.local/share:nosuid,size=512m,uid=1000,gid=1000,mode=755
+      - /.uv_cache:nosuid,size=1g,uid=1000,gid=1000,mode=755
     networks:
       - python-network
 

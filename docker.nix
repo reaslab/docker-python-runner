@@ -24,50 +24,30 @@ let
     scikit-learn
     # Add gurobipy for optimization
     gurobipy
+    # Add yfinance for financial data
+    yfinance
+    # Add seaborn for statistical data visualization
+    seaborn
     # Does not include dangerous modules like os, subprocess, sys
   ]);
 
-  # Create a writable Python installation
-  writablePython = pkgs.stdenv.mkDerivation {
-    name = "writable-python";
-    buildCommand = ''
-      mkdir -p $out/bin
-      mkdir -p $out/lib/python3.12
-      
-      # Copy Python executable from Nix store
-      cp ${pythonWithPackages}/bin/python3.12 $out/bin/python3.12
-      cp ${pythonWithPackages}/bin/python3 $out/bin/python3
-      cp ${pythonWithPackages}/bin/python $out/bin/python
-      
-      # Create symlinks for Python libraries, excluding site-packages
-      for item in ${pythonWithPackages}/lib/python3.12/*; do
-        if [ "$(basename "$item")" != "site-packages" ]; then
-          ln -sf "$item" $out/lib/python3.12/
-        fi
-      done
-      
-      # Create a symlink to the original site-packages for reading
-      ln -sf ${pythonWithPackages}/lib/python3.12/site-packages $out/lib/python3.12/site-packages
-    '';
-  };
+  # Use system Python installation directly
+  systemPython = pythonWithPackages;
 
   # Create restricted Python interpreter startup script
   securePythonScript = pkgs.writeScriptBin "python" ''
     #!${pkgs.bash}/bin/bash
     
     # Set restricted environment
-    export PYTHONPATH="/app"
+    export PYTHONPATH="/app:/tmp/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
-    # Set restricted sys.path, only allow access to safe packages
-    export PYTHONPATH="/app:/usr/local/lib/python3.12/site-packages"
-    
     # Create writable site-packages directory if it doesn't exist
-    mkdir -p /usr/local/lib/python3.12/site-packages
+    mkdir -p /tmp/.local/lib/python3.12/site-packages
     
     # Ensure the directory is writable and has correct permissions
-    chmod 755 /usr/local/lib/python3.12/site-packages
+    chmod 755 /tmp/.local/lib/python3.12/site-packages
     
     # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
@@ -78,67 +58,17 @@ let
     unset LOGNAME
     unset MAIL
     
-    # Create secure Python startup code, disable dangerous modules at runtime
-    cat > /tmp/safe_python.py << 'PYEOF'
+
+    # Start restricted Python interpreter using system Python
+    exec ${systemPython}/bin/python3.12 -S -c "
 import sys
 import builtins
 
-# Dangerous modules list
+# Dangerous modules list - excluding scientific computing modules
+# Note: sys module is safe and needed for package path management
+# os module is partially restricted - only dangerous functions are blocked
 DANGEROUS_MODULES = {
-    'os', 'subprocess', 'sys', 'importlib', 'exec', 'eval', 'compile', 
-    '__import__', 'open', 'file', 'input', 'raw_input', 'urllib', 'requests', 
-    'socket', 'ftplib', 'smtplib', 'poplib', 'imaplib', 'nntplib', 'telnetlib'
-}
-
-# Override __import__ function to block dangerous modules
-original_import = builtins.__import__
-
-def safe_import(name, *args, **kwargs):
-    if name in DANGEROUS_MODULES:
-        raise ImportError(f"Module '{name}' is not allowed in secure environment")
-    return original_import(name, *args, **kwargs)
-
-builtins.__import__ = safe_import
-
-# Override exec and eval functions
-def safe_exec(*args, **kwargs):
-    raise RuntimeError("exec() is not allowed in secure environment")
-
-def safe_eval(*args, **kwargs):
-    raise RuntimeError("eval() is not allowed in secure environment")
-
-builtins.exec = safe_exec
-builtins.eval = safe_eval
-
-# Override compile function
-def safe_compile(*args, **kwargs):
-    raise RuntimeError("compile() is not allowed in secure environment")
-
-builtins.compile = safe_compile
-
-# Override open function
-def safe_open(*args, **kwargs):
-    raise RuntimeError("open() is not allowed in secure environment")
-
-builtins.open = safe_open
-
-# Override input function
-def safe_input(*args, **kwargs):
-    raise RuntimeError("input() is not allowed in secure environment")
-
-builtins.input = safe_input
-
-# Execute user code
-PYEOF
-
-    # Start restricted Python interpreter using writable Python
-    exec ${writablePython}/bin/python3.12 -S -c "
-import sys
-import builtins
-
-# Dangerous modules list
-DANGEROUS_MODULES = {
-    'os', 'subprocess', 'sys', 'importlib', 'exec', 'eval', 'compile', 
+    'subprocess', 'importlib', 'exec', 'eval', 'compile', 
     '__import__', 'open', 'file', 'input', 'raw_input', 'urllib', 'requests', 
     'socket', 'ftplib', 'smtplib', 'poplib', 'imaplib', 'nntplib', 'telnetlib'
 }
@@ -181,10 +111,36 @@ def safe_input(*args, **kwargs):
 
 builtins.input = safe_input
 
+# Configure sys.path to include uv-installed packages
+import sys
+import os
+
+# Restrict dangerous os functions while allowing safe ones
+original_os_module = os
+dangerous_os_functions = {
+    'system', 'popen', 'execv', 'execve', 'execvp', 'execvpe', 
+    'spawnv', 'spawnve', 'spawnvp', 'spawnvpe', 'fork', 'kill',
+    'killpg', 'wait', 'waitpid', 'wait3', 'wait4'
+}
+
+def safe_os_function(name, *args, **kwargs):
+    if name in dangerous_os_functions:
+        raise RuntimeError(f'os.{name}() is not allowed in secure environment')
+    return getattr(original_os_module, name)(*args, **kwargs)
+
+# Override dangerous os functions
+for func_name in dangerous_os_functions:
+    if hasattr(os, func_name):
+        setattr(os, func_name, lambda *args, **kwargs: safe_os_function(func_name, *args, **kwargs))
+
+# Add uv-installed packages directory to sys.path
+uv_packages_path = "/tmp/.local/lib/python3.12/site-packages"
+if os.path.exists(uv_packages_path) and uv_packages_path not in sys.path:
+    sys.path.insert(0, uv_packages_path)
+
 # Set resource limits
 import resource
 import signal
-import sys
 
 # Set memory limit (2GB)
 resource.setrlimit(resource.RLIMIT_AS, (2 * 1024 * 1024 * 1024, 2 * 1024 * 1024 * 1024))
@@ -216,14 +172,27 @@ elif len(sys.argv) == 2 and sys.argv[1] == '--version':
     print(f'Python {sys.version.split()[0]}')
 elif len(sys.argv) == 2 and sys.argv[1].startswith('-'):
     # Handle other flags like -c, -m, etc.
-    exec('${writablePython}/bin/python3.12 "$@"')
+    if sys.argv[1] == '-c' and len(sys.argv) == 3:
+        # Execute code with security restrictions
+        exec(sys.argv[2])
+    elif sys.argv[1] == '-m' and len(sys.argv) == 3:
+        # Execute module with security restrictions
+        import runpy
+        runpy.run_module(sys.argv[2], run_name='__main__')
+    else:
+        # Other flags - execute with security restrictions
+        exec('${systemPython}/bin/python3.12 "$@"')
 else:
     # Execute file or code
     try:
         if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
-            exec(open(sys.argv[1]).read())
+            # Execute file with security restrictions
+            with open(sys.argv[1], 'r') as f:
+                code = f.read()
+            exec(code)
         else:
-            exec('${writablePython}/bin/python3.12 "$@"')
+            # Execute with security restrictions
+            exec('${systemPython}/bin/python3.12 "$@"')
     except Exception as e:
         print(f'Error: {e}', file=sys.stderr)
         sys.exit(1)
@@ -237,7 +206,7 @@ finally:
     #!${pkgs.bash}/bin/bash
     
     # Set restricted environment
-    export PYTHONPATH="/app"
+    export PYTHONPATH="/app:/tmp/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
@@ -246,7 +215,13 @@ finally:
     export UV_LINK_MODE="copy"
     
     # Configure uv to install packages to writable directory
-    export UV_PYTHON_SITE_PACKAGES="/usr/local/lib/python3.12/site-packages"
+    export UV_PYTHON_SITE_PACKAGES="/tmp/.local/lib/python3.12/site-packages"
+    
+    # Set UV cache directory to writable location
+    export UV_CACHE_DIR="/tmp/.uv_cache"
+    
+    # Set Python interpreter path explicitly
+    export UV_PYTHON="${systemPython}/bin/python3.12"
     
     # Restrict network access - only allow HTTPS
     export HTTP_PROXY=""
@@ -263,6 +238,10 @@ finally:
     unset LOGNAME
     unset MAIL
     
+    # Create necessary directories
+    mkdir -p /tmp/.uv_cache
+    mkdir -p /tmp/.local/lib/python3.12/site-packages
+    
     # Start uv
     exec ${pkgs.uv}/bin/uv "$@"
   '';
@@ -276,7 +255,7 @@ finally:
     paths = [
       # Include Python with gurobipy pre-installed
       pythonWithGurobipy
-      writablePython  # Add writable Python installation
+      systemPython  # Add system Python installation
       securePythonScript  # Add secure Python script
       secureUvScript
       pkgs.gurobi  # Direct use of gurobi package from nixpkgs (12.0.3)
@@ -330,7 +309,7 @@ finally:
       mkdir -p $out/etc/passwd.d
       mkdir -p $out/etc/group.d
       mkdir -p $out/etc/shadow.d
-      mkdir -p $out/usr/local/lib/python3.12/site-packages
+      mkdir -p $out/tmp/.local/lib/python3.12/site-packages
       
       # Create uv configuration
       cat > $out/etc/uv/uv.toml << 'EOF'
@@ -339,6 +318,8 @@ finally:
       python-preference = "system"
       # Use copy mode for Docker environment
       link-mode = "copy"
+      # Set cache directory
+      cache-dir = "/tmp/.uv_cache"
       EOF
       
       # Create Gurobi setup script
@@ -408,7 +389,7 @@ finally:
       # Set up user environment
       echo 'export HOME=/home/python-user' >> /home/python-user/.bashrc
       echo 'export PATH=/usr/local/bin:/usr/bin' >> /home/python-user/.bashrc
-      echo 'export PYTHONPATH=/app' >> /home/python-user/.bashrc
+      echo 'export PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages' >> /home/python-user/.bashrc
       EOF
       
       chmod +x $out/setup-user.sh
@@ -420,6 +401,8 @@ in
   pkgs.dockerTools.buildImage {
     name = "ghcr.io/reaslab/docker-python-runner";
     tag = "secure-latest";
+    # Set proper creation timestamp from environment variable
+    created = if builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" != "" then builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" else "now";
     
     copyToRoot = pkgs.buildEnv {
       name = "image-root";
@@ -429,15 +412,17 @@ in
     config = {
       WorkingDir = "/app";
       Env = [
-        "PYTHONPATH=/app"
+        "PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages"
         "PYTHONUNBUFFERED=1"
         "PYTHONDONTWRITEBYTECODE=1"
         # Force uv to use system Python
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
-        "UV_PYTHON_SITE_PACKAGES=/usr/local/lib/python3.12/site-packages"
+        "UV_PYTHON_SITE_PACKAGES=/tmp/.local/lib/python3.12/site-packages"
+        "UV_CACHE_DIR=/tmp/.uv_cache"
+        "UV_PYTHON=${systemPython}/bin/python3.12"
         # Set PATH to include our secure commands - ensure util-linux tools are accessible
-        "PATH=${writablePython}/bin:${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+        "PATH=${systemPython}/bin:${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
         # Set library search path
         "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
         # Gurobi environment variables (using gurobi package from nixpkgs)
@@ -447,6 +432,8 @@ in
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "CURL_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "REQUESTS_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+        # Matplotlib configuration directory
+        "MPLCONFIGDIR=/tmp/.matplotlib"
         # Disable dangerous modules
         "PYTHON_DISABLE_MODULES=os,subprocess,sys,importlib,exec,eval,compile,__import__,open,file,input,raw_input,urllib,requests,socket,ftplib,smtplib,poplib,imaplib,nntplib,telnetlib"
         # Restrict network access
@@ -465,7 +452,7 @@ in
       # Set security parameters - use non-root user
       User = "1000:1000";
       # Additional security settings
-      ReadOnlyRootfs = false;  # 暂时设为 false 以确保启动成功
+      ReadOnlyRootfs = false;  # Temporarily set to false to ensure successful startup
       # Disable privileged mode
       Privileged = false;
       # Set resource limits
