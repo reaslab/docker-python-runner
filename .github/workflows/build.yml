@@ -5,8 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  schedule:
-    - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM
+  # schedule:
+  #   - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM (disabled)
   workflow_dispatch:
     inputs:
       push_images:
