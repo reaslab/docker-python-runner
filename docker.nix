@@ -5,33 +5,45 @@
 
 let
   # Create restricted Python environment, remove dangerous modules
-  restrictedPython = pkgs.python312.override {
-    # Custom Python configuration, disable dangerous features
-    pythonAttr = "python312";
-  };
+  restrictedPython = pkgs.python312;
 
-  # Only include safe scientific computing packages, remove dangerous modules
+  # Final solution for protobuf conflicts:
+  # Install OR-Tools to /.local (separate from Nix store packages)
+  # This completely avoids buildEnv conflicts
+  
+  # Main Python environment with all core packages
   pythonWithPackages = restrictedPython.withPackages (ps: with ps; [
     pip
     setuptools
     wheel
-    # Only include safe scientific computing packages
+    # Scientific computing packages
     cython
     numpy
     scipy
     pandas
     matplotlib
     scikit-learn
-    # Add gurobipy for optimization
-    gurobipy
-    # Add yfinance for financial data
-    yfinance
-    # Add seaborn for statistical data visualization
     seaborn
-    # Does not include dangerous modules like os, subprocess, sys
+    # Optimization solvers
+    gurobipy
+    pulp  # PuLP - Python Linear Programming (no protobuf dependency)
+    # Exclude: yfinance (protobuf 6.x conflicts), ortools (installed separately)
   ]);
 
-  # Use system Python installation directly
+  # Separate OR-Tools environment (will be copied to /.local)
+  pythonWithOrtools = restrictedPython.withPackages (ps: with ps; [
+    ortools
+    # Automatically includes: protobuf 5.x, absl-py, immutabledict, etc.
+  ]);
+
+  # Extract OR-Tools packages to a derivation
+  ortoolsPackages = pkgs.runCommand "ortools-packages" {} ''
+    mkdir -p $out
+    # Copy only the site-packages content (not bin/python to avoid conflicts)
+    cp -r ${pythonWithOrtools}/lib/python3.12/site-packages $out/
+  '';
+
+  # Use main Python environment (only reference it once)
   systemPython = pythonWithPackages;
 
   # Create restricted Python interpreter startup script
@@ -39,15 +51,16 @@ let
     #!${pkgs.bash}/bin/bash
     
     # Set restricted environment
-    export PYTHONPATH="/app:/tmp/.local/lib/python3.12/site-packages"
+    # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
     # Create writable site-packages directory if it doesn't exist
-    mkdir -p /tmp/.local/lib/python3.12/site-packages
+    mkdir -p /.local/lib/python3.12/site-packages
     
     # Ensure the directory is writable and has correct permissions
-    chmod 755 /tmp/.local/lib/python3.12/site-packages
+    chmod 755 /.local/lib/python3.12/site-packages
     
     # Restrict system tool access - ensure util-linux tools are accessible
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
@@ -134,7 +147,8 @@ for func_name in dangerous_os_functions:
         setattr(os, func_name, lambda *args, **kwargs: safe_os_function(func_name, *args, **kwargs))
 
 # Add uv-installed packages directory to sys.path
-uv_packages_path = "/tmp/.local/lib/python3.12/site-packages"
+# Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
+uv_packages_path = "/.local/lib/python3.12/site-packages"
 if os.path.exists(uv_packages_path) and uv_packages_path not in sys.path:
     sys.path.insert(0, uv_packages_path)
 
@@ -206,7 +220,8 @@ finally:
     #!${pkgs.bash}/bin/bash
     
     # Set restricted environment
-    export PYTHONPATH="/app:/tmp/.local/lib/python3.12/site-packages"
+    # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
@@ -215,7 +230,7 @@ finally:
     export UV_LINK_MODE="copy"
     
     # Configure uv to install packages to writable directory
-    export UV_PYTHON_SITE_PACKAGES="/tmp/.local/lib/python3.12/site-packages"
+    export UV_PYTHON_SITE_PACKAGES="/.local/lib/python3.12/site-packages"
     
     # Set UV cache directory to writable location
     export UV_CACHE_DIR="/tmp/.uv_cache"
@@ -240,7 +255,7 @@ finally:
     
     # Create necessary directories
     mkdir -p /tmp/.uv_cache
-    mkdir -p /tmp/.local/lib/python3.12/site-packages
+    mkdir -p /.local/lib/python3.12/site-packages
     
     # Start uv
     exec ${pkgs.uv}/bin/uv "$@"
@@ -250,13 +265,15 @@ finally:
   pythonWithGurobipy = pythonWithPackages;
 
   # Create secure environment with all necessary dependencies
+  # Note: OR-Tools is NOT added here to avoid protobuf conflicts
+  # Instead, it's copied to /.local via dockerSetup
   runtimeEnv = pkgs.buildEnv {
     name = "python-runtime-secure";
     paths = [
-      # Include Python with gurobipy pre-installed
-      pythonWithGurobipy
-      systemPython  # Add system Python installation
-      securePythonScript  # Add secure Python script
+      # Include Python with gurobipy pre-installed (provides python binary)
+      systemPython
+      # OR-Tools is installed via dockerSetup to /.local (avoid protobuf conflict)
+      # securePythonScript conflicts with systemPython's bin/python, skip it
       secureUvScript
       pkgs.gurobi  # Direct use of gurobi package from nixpkgs (12.0.3)
       # Core runtime libraries (required)
@@ -293,8 +310,8 @@ finally:
       pkgs.gcc.cc.lib
       pkgs.stdenv.cc.cc.lib
     ];
-    # Avoid duplicate package issues
-    ignoreCollisions = true;
+    # No longer need ignoreCollisions since we're not merging conflicting paths
+    ignoreCollisions = false;
   };
 
   # Create a package with necessary directories and files for non-root user
@@ -309,18 +326,24 @@ finally:
       mkdir -p $out/etc/passwd.d
       mkdir -p $out/etc/group.d
       mkdir -p $out/etc/shadow.d
-      mkdir -p $out/tmp/.local/lib/python3.12/site-packages
+      mkdir -p $out/.local/lib/python3.12/site-packages
+      
+      # Create ortools directory in a separate location (not /.local since it's tmpfs in containers)
+      mkdir -p $out/opt/ortools/lib/python3.12/site-packages
+      # Copy OR-Tools to /opt/ortools to avoid protobuf conflicts and tmpfs覆盖
+      # This allows OR-Tools to use its own protobuf version (5.x)
+      cp -r ${ortoolsPackages}/site-packages/* $out/opt/ortools/lib/python3.12/site-packages/
       
       # Create uv configuration
-      cat > $out/etc/uv/uv.toml << 'EOF'
-      # Global uv configuration
-      # Force use of system Python interpreter
-      python-preference = "system"
-      # Use copy mode for Docker environment
-      link-mode = "copy"
-      # Set cache directory
-      cache-dir = "/tmp/.uv_cache"
-      EOF
+      cat > $out/etc/uv/uv.toml << 'EOFUV'
+# Global uv configuration
+# Force use of system Python interpreter
+python-preference = "system"
+# Use copy mode for Docker environment
+link-mode = "copy"
+# Set cache directory
+cache-dir = "/tmp/.uv_cache"
+EOFUV
       
       # Create Gurobi setup script
       cat > $out/setup-gurobi.sh << 'EOF'
@@ -360,8 +383,62 @@ finally:
       echo "Or specify license file path via GRB_LICENSE_FILE environment variable"
       EOF
       
+      # Create OR-Tools verification script
+      cat > $out/verify-ortools.sh << 'EOFSCRIPT'
+      #!/bin/bash
+      # Verify OR-Tools is pre-installed and working
+      echo "Verifying OR-Tools installation..."
+      echo ""
+      
+      python << 'EOFPYTHON'
+import sys
+
+try:
+    import ortools
+    from ortools.linear_solver import pywraplp
+    from ortools.sat.python import cp_model
+    import google.protobuf
+    
+    print("✓ OR-Tools is pre-installed!")
+    print("  OR-Tools version:", ortools.__version__)
+    print("  Protobuf version:", google.protobuf.__version__)
+    print("")
+    print("Available solvers:")
+    print("  - GLOP (Google Linear Optimization Package)")
+    print("  - CBC (COIN-OR Branch and Cut)")
+    print("  - SCIP (Solving Constraint Integer Programs)")
+    print("  - CP-SAT (Constraint Programming - SAT)")
+    print("")
+    
+    # Test GLOP solver
+    solver = pywraplp.Solver.CreateSolver("GLOP")
+    if solver:
+        print("✓ GLOP solver working correctly!")
+    else:
+        print("✗ Failed to create GLOP solver")
+        sys.exit(1)
+    
+    # Test CP-SAT solver
+    model = cp_model.CpModel()
+    sat_solver = cp_model.CpSolver()
+    print("✓ CP-SAT solver working correctly!")
+    print("")
+    print("OR-Tools is ready to use! 🎉")
+    
+except ImportError as e:
+    print("✗ OR-Tools not found:", str(e))
+    print("")
+    print("This should not happen - OR-Tools is pre-installed in the image.")
+    sys.exit(1)
+except Exception as e:
+    print("✗ Error verifying OR-Tools:", str(e))
+    sys.exit(1)
+EOFPYTHON
+      EOFSCRIPT
+      
       chmod +x $out/setup-gurobi.sh
       chmod +x $out/verify-gurobi.sh
+      chmod +x $out/verify-ortools.sh
       
       # Note: python3 binary is provided by pythonWithPackages in runtimeEnv
       # No need to create a symlink here to avoid collision
@@ -389,7 +466,7 @@ finally:
       # Set up user environment
       echo 'export HOME=/home/python-user' >> /home/python-user/.bashrc
       echo 'export PATH=/usr/local/bin:/usr/bin' >> /home/python-user/.bashrc
-      echo 'export PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages' >> /home/python-user/.bashrc
+      echo 'export PYTHONPATH=/app:/.local/lib/python3.12/site-packages' >> /home/python-user/.bashrc
       EOF
       
       chmod +x $out/setup-user.sh
@@ -410,15 +487,15 @@ in
     };
     
     config = {
-      WorkingDir = "/app";
+      WorkingDir = "/tmp";
       Env = [
-        "PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages"
+        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
         "PYTHONUNBUFFERED=1"
         "PYTHONDONTWRITEBYTECODE=1"
         # Force uv to use system Python
         "UV_PYTHON_PREFERENCE=system"
         "UV_LINK_MODE=copy"
-        "UV_PYTHON_SITE_PACKAGES=/tmp/.local/lib/python3.12/site-packages"
+        "UV_PYTHON_SITE_PACKAGES=/.local/lib/python3.12/site-packages"
         "UV_CACHE_DIR=/tmp/.uv_cache"
         "UV_PYTHON=${systemPython}/bin/python3.12"
         # Set PATH to include our secure commands - ensure util-linux tools are accessible

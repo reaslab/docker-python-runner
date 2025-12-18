@@ -14,7 +14,7 @@ services:
       - ./gurobi.lic:/app/gurobi.lic:ro
     environment:
       - GRB_LICENSE_FILE=/app/gurobi.lic
-      - PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages
+      - PYTHONPATH=/app:/.local/lib/python3.12/site-packages
     working_dir: /app
     command: tail -f /dev/null
     # Security settings
@@ -43,7 +43,7 @@ services:
       - ./gurobi.lic:/app/gurobi.lic:ro
     environment:
       - GRB_LICENSE_FILE=/app/gurobi.lic
-      - PYTHONPATH=/app:/tmp/.local/lib/python3.12/site-packages
+      - PYTHONPATH=/app:/.local/lib/python3.12/site-packages
     working_dir: /app
     command: bash
     # Development mode - less restrictive

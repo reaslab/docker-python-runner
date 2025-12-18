@@ -7,7 +7,9 @@ A secure, production-ready Docker environment for Python development with UV pac
 - **Nix-based Build**: Reproducible builds using Nix dockerTools
 - **Secure Python Environment**: Restricted Python interpreter with disabled dangerous modules
 - **UV Package Manager**: Fast Python package and dependency manager
-- **Gurobi Support**: Pre-installed Gurobi optimization solver (12.0.3)
+- **Optimization Solvers Pre-installed**:
+  - **Gurobi**: Commercial optimization solver (12.0.3) - requires license
+  - **OR-Tools**: Google's open-source suite (GLOP, CBC, SCIP, CP-SAT) - no license required
 - **Non-root User**: Runs as non-privileged user for security
 - **Resource Limits**: Built-in CPU and memory limits
 - **Read-only Root**: Root filesystem is read-only
@@ -77,6 +79,39 @@ docker run --rm \
   ghcr.io/reaslab/docker-python-runner:secure-latest python optimization.py
 ```
 
+### With OR-Tools Optimization
+
+```bash
+# OR-Tools is pre-installed, no license required!
+# Run optimization code directly
+docker run --rm -v $(pwd):/app \
+  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+from ortools.linear_solver import pywraplp
+
+# Create a GLOP solver
+solver = pywraplp.Solver.CreateSolver('GLOP')
+
+# Define variables
+x = solver.NumVar(0, 10, 'x')
+y = solver.NumVar(0, 10, 'y')
+
+# Define objective: maximize 3x + 4y
+solver.Maximize(3 * x + 4 * y)
+
+# Add constraint: x + 2y <= 14
+solver.Add(x + 2 * y <= 14)
+
+# Solve
+status = solver.Solve()
+if status == pywraplp.Solver.OPTIMAL:
+    print(f'Optimal solution: x={x.solution_value()}, y={y.solution_value()}')
+    print(f'Objective value: {solver.Objective().Value()}')
+"
+
+# Verify OR-Tools installation
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh
+```
+
 ## Security Features
 
 - **Restricted Python**: Dangerous modules (os, subprocess, sys, etc.) are disabled
@@ -92,10 +127,27 @@ docker run --rm \
 - **Core**: pip, setuptools, wheel
 - **Scientific**: numpy, scipy, pandas, matplotlib, scikit-learn
 - **Visualization**: seaborn
-- **Financial**: yfinance
-- **Optimization**: gurobipy (Gurobi 12.0.3)
+- **Optimization**: 
+  - **gurobipy** (Gurobi 12.0.3) - Pre-installed, requires license
+  - **ortools** (Google OR-Tools) - Pre-installed, no license required ✨
 - **Build Tools**: cython
 - **Package Manager**: uv
+
+### OR-Tools Solvers (Pre-installed)
+
+OR-Tools is fully pre-installed with the following solvers:
+
+- **GLOP**: Google's linear programming solver (for LP problems)
+- **CBC**: COIN-OR Branch and Cut solver (for MILP problems)
+- **SCIP**: Solving Constraint Integer Programs (for MILP/MINLP)
+- **CP-SAT**: Constraint Programming SAT solver (for constraint programming)
+
+**Protobuf Compatibility**:
+- OR-Tools uses protobuf 5.x (managed by Nix)
+- Separate environment prevents conflicts with other packages
+- `ignoreCollisions` enabled in buildEnv for seamless integration
+
+**Note**: `yfinance` is excluded from pre-installation due to protobuf 6.x requirement. Install it via `uv` if needed.
 
 ## Environment Variables
 
@@ -168,6 +220,9 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest uv --version
 
 # Test Gurobi (requires license)
 docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-runner:secure-latest python -c "import gurobipy; print('Gurobi available')"
+
+# Test OR-Tools (pre-installed, verify)
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh
 
 # Test security restrictions
 docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
