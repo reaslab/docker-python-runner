@@ -9,6 +9,7 @@ A secure, production-ready Docker environment for Python development with UV pac
 - **UV Package Manager**: Fast Python package and dependency manager
 - **Optimization Solvers Pre-installed**:
   - **Gurobi**: Commercial optimization solver (12.0.3) - requires license
+  - **CPLEX**: IBM ILOG CPLEX Optimization Studio (22.1.2) - requires license
   - **OR-Tools**: Google's open-source suite (GLOP, CBC, SCIP, CP-SAT) - no license required
 - **Non-root User**: Runs as non-privileged user for security
 - **Resource Limits**: Built-in CPU and memory limits
@@ -79,6 +80,22 @@ docker run --rm \
   ghcr.io/reaslab/docker-python-runner:secure-latest python optimization.py
 ```
 
+### With CPLEX Optimization
+
+```bash
+# Run CPLEX optimization code
+# CPLEX is pre-installed at /opt/ibm/ILOG/CPLEX_Studio221
+docker run --rm -v $(pwd):/app \
+  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+import cplex
+print(f'CPLEX Version: {cplex.__version__}')
+# ... your optimization code ...
+"
+
+# Verify CPLEX installation
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
+```
+
 ### With OR-Tools Optimization
 
 ```bash
@@ -129,6 +146,7 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortoo
 - **Visualization**: seaborn
 - **Optimization**: 
   - **gurobipy** (Gurobi 12.0.3) - Pre-installed, requires license
+  - **cplex** (IBM CPLEX 22.1.2) - Pre-installed, requires license
   - **ortools** (Google OR-Tools) - Pre-installed, no license required ✨
 - **Build Tools**: cython
 - **Package Manager**: uv
@@ -220,6 +238,9 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest uv --version
 
 # Test Gurobi (requires license)
 docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-runner:secure-latest python -c "import gurobipy; print('Gurobi available')"
+
+# Test CPLEX (verify installation)
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
 
 # Test OR-Tools (pre-installed, verify)
 docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh

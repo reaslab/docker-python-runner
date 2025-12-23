@@ -43,6 +43,403 @@ let
     cp -r ${pythonWithOrtools}/lib/python3.12/site-packages $out/
   '';
 
+  # CPLEX Installation
+  # Use the installer saved in the repository folder
+  #
+  # UPGRADE INSTRUCTIONS (when updating CPLEX installer):
+  # 1. Download new CPLEX installer and place it in pkgs/cplex/
+  # 2. Update the filename below to match the new installer
+  # 3. The extraction logic should automatically adapt to new file sizes
+  # 4. If extraction fails, check if InstallAnywhere variable names changed in the script header
+  # 5. Test the build: nix-build docker.nix -A docker-image
+  # Expected changes: Usually only the filename needs updating, extraction logic remains the same
+  cplexInstallerPath = ./pkgs/cplex/cos_installer_preview-22.1.2.R4-M0N96ML-linux-x86-64.bin;
+  
+  cplex = pkgs.stdenv.mkDerivation {
+    name = "cplex-22.1.2";
+    # Use builtins.path to import the installer into the Nix store
+    src = if builtins.pathExists cplexInstallerPath 
+          then builtins.path { path = cplexInstallerPath; name = "cplex-installer.bin"; }
+          else pkgs.emptyDirectory; # Fallback if not found
+
+    unpackPhase = "true";  # We'll do extraction in installPhase to keep files in scope
+    
+    # Dependencies for extraction and cleanup
+    nativeBuildInputs = [ 
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.unzip
+      pkgs.patchelf
+    ];
+    # We will not use autoPatchelf on the installer
+    dontAutoPatchelf = true;
+    buildInputs = [ 
+      pkgs.glibc 
+      pkgs.zlib 
+      pkgs.stdenv.cc.cc.lib 
+      pkgs.libffi
+      pkgs.libxcrypt-legacy
+      pkgs.fontconfig
+      pkgs.freetype
+      pkgs.curl
+      pkgs.unixODBC
+      pkgs.sqlite
+      pkgs.xorg.libX11
+      pkgs.xorg.libXext
+      pkgs.xorg.libXrender
+      pkgs.xorg.libXtst
+      pkgs.xorg.libXi
+      pkgs.xorg.libXmu
+      pkgs.xorg.libSM
+      pkgs.xorg.libICE
+      pkgs.alsa-lib
+      pkgs.mariadb-connector-c
+      pkgs.libnsl
+    ];
+
+    # CPLEX installer and JRE bundle often contain broken symlinks 
+    # and other issues that Nix checks for by default.
+    dontCheckForBrokenSymlinks = true;
+    # Prevent audit failures for temp directories in the installer
+    noAuditTmpdir = true;
+
+    installPhase = ''
+      # Extract the embedded archive from the InstallAnywhere self-extractor
+      # This method bypasses the problematic InstallAnywhere installer execution
+      # and directly extracts the CPLEX files from the embedded archives
+      #
+      # UPGRADE NOTE: When updating to a new CPLEX installer version:
+      # 1. Replace the installer file in pkgs/cplex/
+      # 2. The variable names (BLOCKSIZE, JRESTART, etc.) should remain the same
+      # 3. Only the values may change - the parsing logic should work automatically
+      #
+      echo "Extracting embedded archive from CPLEX installer..."
+      
+      # Parse InstallAnywhere variables from the script header
+      BLOCKSIZE=$(grep -m1 "^BLOCKSIZE=" "$src" 2>/dev/null | cut -d= -f2 || echo "32768")
+      JRESTART=$(grep -m1 "^JRESTART=" "$src" 2>/dev/null | cut -d= -f2 || echo "5")
+      JREREALSIZE=$(grep -m1 "^JREREALSIZE=" "$src" 2>/dev/null | cut -d= -f2 || echo "48207661")
+      ARCHREALSIZE=$(grep -m1 "^ARCHREALSIZE=" "$src" 2>/dev/null | cut -d= -f2 || echo "6804302")
+      RESREALSIZE=$(grep -m1 "^RESREALSIZE=" "$src" 2>/dev/null | cut -d= -f2 || echo "409293865")
+      
+      echo "Parsed InstallAnywhere variables:"
+      echo "  BLOCKSIZE: $BLOCKSIZE"
+      echo "  JRESTART: $JRESTART"
+      echo "  RESREALSIZE: $RESREALSIZE"
+      
+      # Calculate resource archive start position
+      JRE_BLOCKS=$(( (JREREALSIZE + BLOCKSIZE - 1) / BLOCKSIZE ))
+      ARCHSTART_BLOCKS=$(( JRESTART + JRE_BLOCKS ))
+      ARCH_BLOCKS=$(( (ARCHREALSIZE + BLOCKSIZE - 1) / BLOCKSIZE ))
+      RESSTART_BLOCKS=$(( ARCHSTART_BLOCKS + ARCH_BLOCKS ))
+      RESOURCE_START_BYTES=$(( RESSTART_BLOCKS * BLOCKSIZE ))
+      
+      echo "Resource archive starts at byte: $RESOURCE_START_BYTES"
+      echo "Extracting resource archive (~$((RESREALSIZE / 1048576))MB)..."
+      
+      # Extract resource archive (contains actual CPLEX files)
+      mkdir -p archive_extract
+      cd archive_extract
+      
+      # Extract using dd - avoid pipes to prevent SIGPIPE errors
+      # Use bs=1 for exact byte positioning, even if slower
+      echo "Extracting $RESREALSIZE bytes starting at offset $RESOURCE_START_BYTES..."
+      dd if="$src" bs=1 skip=$RESOURCE_START_BYTES count=$RESREALSIZE of=resources.zip 2>/dev/null
+      
+      if [ -f resources.zip ] && [ -s resources.zip ]; then
+        ACTUAL_SIZE=$(stat -c%s resources.zip 2>/dev/null || stat -f%z resources.zip 2>/dev/null)
+        echo "✅ Extracted resource archive ($ACTUAL_SIZE bytes)"
+        
+        if [ "$ACTUAL_SIZE" -ne "$RESREALSIZE" ]; then
+          echo "⚠️  Warning: Size mismatch (expected $RESREALSIZE, got $ACTUAL_SIZE)"
+          # Try to fix by truncating or padding
+          if [ "$ACTUAL_SIZE" -gt "$RESREALSIZE" ]; then
+            truncate -s $RESREALSIZE resources.zip 2>/dev/null || true
+          fi
+        fi
+        
+        echo "Extracting resource ZIP contents..."
+        unzip -q resources.zip || {
+          echo "❌ Error: Failed to extract resource ZIP archive"
+          echo "Checking ZIP file integrity..."
+          file resources.zip || true
+          exit 1
+        }
+        echo "✅ Successfully extracted resource archive"
+      else
+        echo "❌ Error: Failed to extract resource archive file"
+        exit 1
+      fi
+      
+      echo "Processing extracted CPLEX archive..."
+      
+      # The CPLEX files are in a nested JAR file inside the resource ZIP
+      CPLEX_JAR=$(find . -name "*CPLEXOptimizationStudio*.jar" -type f | head -n 1)
+      
+      if [ -z "$CPLEX_JAR" ] || [ ! -f "$CPLEX_JAR" ]; then
+        echo "❌ Error: CPLEX JAR file not found"
+        echo "Searching for JAR files..."
+        find . -name "*.jar" -type f
+        exit 1
+      fi
+      
+      echo "Found CPLEX JAR: $CPLEX_JAR"
+      JAR_SIZE=$(stat -c%s "$CPLEX_JAR" 2>/dev/null || stat -f%z "$CPLEX_JAR" 2>/dev/null)
+      echo "Extracting CPLEX JAR (~$((JAR_SIZE / 1048576))MB, this may take 1-3 minutes)..."
+      
+      # Extract the JAR file (JAR files are ZIP archives)
+      mkdir -p cplex_extract
+      cd cplex_extract
+      unzip -q "../$CPLEX_JAR" || {
+        echo "❌ Error: Failed to extract CPLEX JAR"
+        exit 1
+      }
+      echo "✅ Successfully extracted CPLEX JAR"
+      
+      # Find the CPLEX installation directory
+      CPLEX_DIR=""
+      if CPLEX_DIR=$(find . -type d -name "cplex" -exec test -d {}/bin/x86-64_linux \; -print | head -n 1); then
+        echo "✅ Found CPLEX directory: $CPLEX_DIR"
+      elif CPLEX_DIR=$(find . -type d -path "*/CPLEX_Studio221/cplex" | head -n 1); then
+        echo "✅ Found CPLEX directory: $CPLEX_DIR"
+      elif CPLEX_DIR=$(find . -type d -path "*/cplex/bin/x86-64_linux" | xargs dirname | xargs dirname | head -n 1); then
+        echo "✅ Found CPLEX directory: $CPLEX_DIR"
+      else
+        echo "❌ Error: Could not locate CPLEX directory in extracted JAR"
+        echo "Directory structure:"
+        find . -type d | head -30
+        exit 1
+      fi
+      
+      # Copy CPLEX and CP Optimizer to output directory
+      echo "Copying solvers to output directory..."
+      mkdir -p $out/opt/ibm/ILOG/CPLEX_Studio221
+      
+      # Use a robust way to find directories
+      SOLVER_BASE=$(find . -type d -path "*/opt/ibm/ILOG/CPLEX_Studio221" -print -quit || true)
+      if [ -n "$SOLVER_BASE" ]; then
+        cp -r "$SOLVER_BASE"/* $out/opt/ibm/ILOG/CPLEX_Studio221/
+      else
+        for s in cplex cpoptimizer concert opl docplex; do
+          S_PATH=$(find . -type d -name "$s" ! -path "*/examples/*" -print -quit || true)
+          [ -n "$S_PATH" ] && cp -r "$S_PATH" $out/opt/ibm/ILOG/CPLEX_Studio221/
+        done
+      fi
+
+      # Cleanup large irrelevant files to keep image size down
+      find $out/opt/ibm/ILOG -type d -name "examples" -exec rm -rf {} + || true
+      find $out/opt/ibm/ILOG -type f -name "*.pdf" -delete || true
+
+      # Fix permissions: some extracted payloads preserve read-only modes (e.g. 444),
+      # which makes CPLEX binaries non-executable inside the final image.
+      echo "Fixing CPLEX file permissions..."
+      if [ -d "$out/opt/ibm/ILOG/CPLEX_Studio221" ]; then
+        # Ensure directories are searchable
+        find "$out/opt/ibm/ILOG/CPLEX_Studio221" -type d -exec chmod 755 {} + || true
+        # Make binaries executable in any */bin/x86-64_linux directory (exclude shared libs)
+        find "$out/opt/ibm/ILOG/CPLEX_Studio221" -type d -path "*/bin/x86-64_linux" | while read -r d; do
+          find "$d" -maxdepth 1 -type f ! -name "*.so*" -exec chmod 755 {} + || true
+          find "$d" -maxdepth 1 -type f -name "*.so*" -exec chmod 644 {} + || true
+        done
+      fi
+      
+      # Verify the core directory exists
+      if [ -d "$out/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux" ]; then
+        echo "✅ CPLEX core binaries found in output directory"
+        echo "CPLEX installation structure:"
+        find $out/opt/ibm/ILOG/CPLEX_Studio221 -maxdepth 3 -type d | head -20 || true
+        
+        # Also look for Python API in the extracted structure before copying
+        echo "Searching for Python API in extracted JAR..."
+        PYTHON_API_DIR=$(find . -type d -name "python" ! -path "*/examples/*" -print -quit || true)
+        if [ -n "$PYTHON_API_DIR" ]; then
+          echo "Found Python API directory: $PYTHON_API_DIR"
+          # Look for cplex Python package within
+          CPLEX_PYTHON_PKG=$(find "$PYTHON_API_DIR" -name "__init__.py" -path "*/cplex/__init__.py" -print -quit | xargs dirname || true)
+          if [ -n "$CPLEX_PYTHON_PKG" ] && [ "$CPLEX_PYTHON_PKG" != "." ]; then
+            echo "Found CPLEX Python package: $CPLEX_PYTHON_PKG"
+            # Copy Python API to a known location
+            mkdir -p $out/opt/ibm/ILOG/CPLEX_Studio221/cplex/python
+            cp -r "$CPLEX_PYTHON_PKG"/* $out/opt/ibm/ILOG/CPLEX_Studio221/cplex/python/ 2>/dev/null || true
+          fi
+        fi
+      else
+        echo "❌ Error: CPLEX core binaries not found in expected location"
+        echo "Output directory structure:"
+        find $out -maxdepth 5 -type d | head -30 || true
+        exit 1
+      fi
+    '';
+    
+    # Post-install: Patch installed libraries to work with Nix's glibc
+    postFixup = ''
+      echo "Patching CPLEX ELF files for Nix compatibility..."
+
+      RPATH="${pkgs.glibc}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.libffi}/lib"
+      INTERP="${pkgs.glibc}/lib/ld-linux-x86-64.so.2"
+
+      # 1) Patch ELF executables (and any ELF that has an interpreter) so they can run in the image.
+      # Missing/incorrect interpreter path is what causes: "cannot execute: required file not found".
+      find "$out/opt/ibm/ILOG/CPLEX_Studio221" -type f | while read -r f; do
+        if patchelf --print-interpreter "$f" >/dev/null 2>&1; then
+          patchelf --set-interpreter "$INTERP" "$f" || true
+          patchelf --set-rpath "$RPATH" "$f" || true
+        fi
+      done
+
+      # 2) Patch shared libraries rpath (they won't have an interpreter).
+      find "$out/opt/ibm/ILOG/CPLEX_Studio221" -type f \( -name "*.so" -o -name "*.so.*" \) | while read -r lib; do
+        patchelf --set-rpath "$RPATH" "$lib" || true
+      done
+    '';
+  };
+
+  # Extract CPLEX Python API
+  # First try to find it in the CPLEX installation, otherwise install via uv pip
+  cplexPythonPackages = pkgs.runCommand "cplex-python-packages" {
+    nativeBuildInputs = [ pythonWithPackages pkgs.uv pkgs.cacert pkgs.curl ];
+    # Allow network access to download pip packages
+    # Note: This requires --option sandbox false or network access enabled
+    __impureHostDeps = [ "/etc/resolv.conf" "/etc/hosts" ];
+    # Mark as impure to allow network access
+    preferLocalBuild = false;
+    allowSubstitutes = false;
+  } ''
+    mkdir -p $out/site-packages
+    
+    echo "Searching for CPLEX Python API in ${cplex}..."
+    
+    # Method 1: Look for python/<version>/<arch>/cplex structure
+    # CPLEX provides Python API in version-specific directories like:
+    # cplex/python/3.10/x86-64_linux/cplex/
+    # cplex/python/3.11/x86-64_linux/cplex/
+    # cplex/python/3.12/x86-64_linux/cplex/
+    CPLEX_API_DIR=""
+    PYTHON_BASE="${cplex}/opt/ibm/ILOG/CPLEX_Studio221/cplex/python"
+    
+    if [ -d "$PYTHON_BASE" ]; then
+      echo "Found Python base directory: $PYTHON_BASE"
+      # Prefer Python 3.12, then 3.11, then 3.10, then any version
+      PYTHON_VERSIONS="3.12 3.11 3.10"
+      FOUND=0
+      
+      for PREFERRED_VERSION in $PYTHON_VERSIONS; do
+        VERSION_DIR="$PYTHON_BASE/$PREFERRED_VERSION"
+        if [ -d "$VERSION_DIR" ]; then
+          echo "Checking preferred Python version: $PREFERRED_VERSION"
+          # Look for architecture-specific directory (x86-64_linux, etc.)
+          for ARCH_DIR in "$VERSION_DIR"/*; do
+            if [ -d "$ARCH_DIR" ]; then
+              ARCH=$(basename "$ARCH_DIR")
+              echo "Checking architecture: $ARCH"
+              # Look for cplex package directory
+              CPLEX_PKG_DIR="$ARCH_DIR/cplex"
+              if [ -d "$CPLEX_PKG_DIR" ] && [ -f "$CPLEX_PKG_DIR/__init__.py" ]; then
+                CPLEX_API_DIR="$CPLEX_PKG_DIR"
+                echo "✅ Found CPLEX Python API for Python $PREFERRED_VERSION: $CPLEX_API_DIR"
+                FOUND=1
+                break 2
+              fi
+            fi
+          done
+        fi
+      done
+      
+      # If preferred versions not found, try any version
+      if [ $FOUND -eq 0 ]; then
+        echo "Preferred Python versions not found, trying any available version..."
+        for VERSION_DIR in "$PYTHON_BASE"/*; do
+          if [ -d "$VERSION_DIR" ]; then
+            VERSION=$(basename "$VERSION_DIR")
+            echo "Checking Python version: $VERSION"
+            for ARCH_DIR in "$VERSION_DIR"/*; do
+              if [ -d "$ARCH_DIR" ]; then
+                ARCH=$(basename "$ARCH_DIR")
+                CPLEX_PKG_DIR="$ARCH_DIR/cplex"
+                if [ -d "$CPLEX_PKG_DIR" ] && [ -f "$CPLEX_PKG_DIR/__init__.py" ]; then
+                  CPLEX_API_DIR="$CPLEX_PKG_DIR"
+                  echo "✅ Found CPLEX Python API for Python $VERSION: $CPLEX_API_DIR"
+                  FOUND=1
+                  break 2
+                fi
+              fi
+            done
+          fi
+        done
+      fi
+    fi
+    
+    # Method 2: Direct search for cplex/__init__.py in python directories
+    if [ -z "$CPLEX_API_DIR" ]; then
+      echo "Trying alternative search method..."
+      CPLEX_API_DIR=$(find ${cplex} -name "__init__.py" -path "*/python/*/cplex/__init__.py" ! -path "*/examples/*" -print | xargs -I {} dirname {} | head -n 1)
+    fi
+    
+    # Method 3: Search for any cplex Python package directory
+    if [ -z "$CPLEX_API_DIR" ]; then
+      CPLEX_API_DIR=$(find ${cplex} -name "__init__.py" -path "*/cplex/__init__.py" ! -path "*/examples/*" -print | xargs -I {} dirname {} | head -n 1)
+    fi
+    
+    if [ -n "$CPLEX_API_DIR" ] && [ -d "$CPLEX_API_DIR" ]; then
+      echo "✅ Found CPLEX Python API in: $CPLEX_API_DIR"
+      cp -r "$CPLEX_API_DIR" $out/site-packages/
+      echo "✅ CPLEX Python API copied successfully"
+      echo "Contents:"
+      ls -la $out/site-packages/cplex/ | head -10
+    else
+      echo "⚠️  CPLEX Python API directory not found in installation package"
+      echo "Installing CPLEX Python API via uv pip..."
+      echo ""
+      
+      # Set up environment for uv pip installation
+      export CPLEX_HOME=${cplex}/opt/ibm/ILOG/CPLEX_Studio221/cplex
+      export LD_LIBRARY_PATH=${cplex}/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:$LD_LIBRARY_PATH
+      export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+      export PYTHON=${pythonWithPackages}/bin/python3.12
+      # Ensure uv has writable cache + HOME during build
+      export HOME="$TMPDIR/home"
+      mkdir -p "$HOME"
+      export UV_CACHE_DIR="$TMPDIR/.uv_cache"
+      mkdir -p "$UV_CACHE_DIR"
+      # Avoid flaky downloads: increase timeouts and disable progress UI
+      export UV_HTTP_TIMEOUT="300"
+      export UV_NO_PROGRESS="1"
+      
+      # Configure uv to use system Python
+      export UV_PYTHON_PREFERENCE="system"
+      export UV_PYTHON="$PYTHON"
+      
+      # Install cplex and docplex package using uv pip
+      # Use --target to install to our output directory
+      # Use --python to specify Python interpreter explicitly
+      echo "Attempting to install cplex and docplex via uv pip from PyPI..."
+      echo "Python interpreter: $PYTHON"
+      echo "Target directory: $out/site-packages"
+      if ${pkgs.uv}/bin/uv pip install --python "$PYTHON" --target $out/site-packages cplex docplex 2>&1; then
+        echo "✅ Successfully installed CPLEX and docplex Python API via uv pip"
+        echo "Installed packages:"
+        ls -la $out/site-packages/ | head -10
+        
+        # Verify installation
+        if [ -f "$out/site-packages/cplex/__init__.py" ] && [ -f "$out/site-packages/docplex/__init__.py" ]; then
+          echo "✅ Verified: CPLEX and docplex Python packages are correctly installed"
+        else
+          echo "⚠️  Warning: Packages installed but some __init__.py not found"
+          find $out/site-packages -maxdepth 2 -type d
+        fi
+      else
+        echo "❌ Error: Failed to install packages via uv pip"
+        echo "This might be due to:"
+        echo "  1. Network restrictions (check if build.sh uses --option sandbox false)"
+        echo "  2. PyPI unavailability"
+        echo "  3. CPLEX package not available on PyPI"
+        echo ""
+        echo "Build is configured to PREINSTALL CPLEX Python API; failing hard."
+        exit 1
+      fi
+    fi
+  '';
+
   # Use main Python environment (only reference it once)
   systemPython = pythonWithPackages;
 
@@ -52,7 +449,7 @@ let
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
@@ -63,7 +460,8 @@ let
     chmod 755 /.local/lib/python3.12/site-packages
     
     # Restrict system tool access - ensure util-linux tools are accessible
-    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+    # Also include CPLEX paths so docplex can find solvers
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
     
     # Restrict environment variables
     unset HOME
@@ -221,9 +619,12 @@ finally:
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
+    # Some packages (sdists) require a valid HOME during build (e.g. setuptools expanduser()).
+    # Keep HOME set to a writable directory.
+    export HOME="${HOME:-/home/python-user}"
     
     # Force uv to use system Python
     export UV_PYTHON_PREFERENCE="system"
@@ -248,14 +649,13 @@ finally:
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
     
     # Restrict environment variables
-    unset HOME
-    unset USER
-    unset LOGNAME
+    # NOTE: do not unset HOME, it breaks building some packages.
     unset MAIL
     
     # Create necessary directories
     mkdir -p /tmp/.uv_cache
     mkdir -p /.local/lib/python3.12/site-packages
+    mkdir -p "$HOME" || true
     
     # Start uv
     exec ${pkgs.uv}/bin/uv "$@"
@@ -264,54 +664,39 @@ finally:
   # Python environment with gurobipy pre-installed
   pythonWithGurobipy = pythonWithPackages;
 
+  # Create a small derivation to provide the 'python' symlink
+  pythonSymlink = pkgs.runCommand "python-symlink" {} ''
+    mkdir -p $out/bin
+    ln -s ${systemPython}/bin/python3.12 $out/bin/python
+    ln -s ${systemPython}/bin/python3.12 $out/bin/python3
+  '';
+
   # Create secure environment with all necessary dependencies
-  # Note: OR-Tools is NOT added here to avoid protobuf conflicts
-  # Instead, it's copied to /.local via dockerSetup
   runtimeEnv = pkgs.buildEnv {
     name = "python-runtime-secure";
+    ignoreCollisions = true; 
     paths = [
-      # Include Python with gurobipy pre-installed (provides python binary)
       systemPython
-      # OR-Tools is installed via dockerSetup to /.local (avoid protobuf conflict)
-      # securePythonScript conflicts with systemPython's bin/python, skip it
+      pythonSymlink
       secureUvScript
-      pkgs.gurobi  # Direct use of gurobi package from nixpkgs (12.0.3)
-      # Core runtime libraries (required)
+      pkgs.gurobi
+      cplex
       pkgs.glibc
       pkgs.zlib
       pkgs.ncurses
-      
-      # Network library (needed for uv to download packages)
       pkgs.openssl
-      
-      # C extension library (needed for some Python packages)
       pkgs.libffi
-      
-      # Basic system tools (minimal)
       pkgs.bash
       pkgs.coreutils
-      # Essential commands for container management - ensure util-linux is included
-      pkgs.util-linux  # Provides tail, head, etc.
-      
-      # Network tools (needed for uv to download packages)
-      # Note: curl has security risks, but needed for uv to download packages
+      pkgs.util-linux
       pkgs.curl
-      
-      # File processing tools (needed for uv to handle compressed packages)
-      # Note: tar and gzip have security risks, but needed for uv to handle packages
       pkgs.gnutar
       pkgs.gzip
-      
-      # Gurobi dependency math libraries
       pkgs.lapack
       pkgs.blas
-
-      # C++ standard library (needed for numpy and other C extensions)
       pkgs.gcc.cc.lib
       pkgs.stdenv.cc.cc.lib
     ];
-    # No longer need ignoreCollisions since we're not merging conflicting paths
-    ignoreCollisions = false;
   };
 
   # Create a package with necessary directories and files for non-root user
@@ -319,20 +704,28 @@ finally:
     name = "docker-setup";
     buildCommand = ''
       # Create directories with proper ownership
-      mkdir -p $out/app
-      mkdir -p $out/bin
-      mkdir -p $out/etc/uv
-      mkdir -p $out/home/python-user
-      mkdir -p $out/etc/passwd.d
-      mkdir -p $out/etc/group.d
-      mkdir -p $out/etc/shadow.d
+      mkdir -p $out/app $out/bin $out/tmp $out/etc/uv $out/home/python-user
+      mkdir -p $out/etc/passwd.d $out/etc/group.d $out/etc/shadow.d
       mkdir -p $out/.local/lib/python3.12/site-packages
+      
+      # Create uv cache dir
+      mkdir -p $out/tmp/.uv_cache
+      
+      # Create symbolic link for python to satisfy uv and other tools
+      # Note: We do this in dockerSetup now to avoid duplication
+      # ln -sf ${systemPython}/bin/python3.12 $out/bin/python
+      # ln -sf ${systemPython}/bin/python3.12 $out/bin/python3
       
       # Create ortools directory in a separate location (not /.local since it's tmpfs in containers)
       mkdir -p $out/opt/ortools/lib/python3.12/site-packages
       # Copy OR-Tools to /opt/ortools to avoid protobuf conflicts and tmpfs覆盖
       # This allows OR-Tools to use its own protobuf version (5.x)
       cp -r ${ortoolsPackages}/site-packages/* $out/opt/ortools/lib/python3.12/site-packages/
+      
+      # Create cplex directory for Python API
+      mkdir -p $out/opt/cplex/lib/python3.12/site-packages
+      # Copy CPLEX Python API to /opt/cplex
+      cp -r ${cplexPythonPackages}/site-packages/* $out/opt/cplex/lib/python3.12/site-packages/
       
       # Create uv configuration
       cat > $out/etc/uv/uv.toml << 'EOFUV'
@@ -440,6 +833,53 @@ EOFPYTHON
       chmod +x $out/verify-gurobi.sh
       chmod +x $out/verify-ortools.sh
       
+      # Create CPLEX verification script
+      cat > $out/verify-cplex.sh << 'EOFSCRIPT'
+      #!/bin/bash
+      # Verify CPLEX is pre-installed and working
+      echo "Verifying CPLEX installation..."
+      echo ""
+      
+      # Set CPLEX environment
+      export CPLEX_HOME=/opt/ibm/ILOG/CPLEX_Studio221/cplex
+      export LD_LIBRARY_PATH=$CPLEX_HOME/bin/x86-64_linux:$LD_LIBRARY_PATH
+      
+      python << 'EOFPYTHON'
+import sys
+import os
+
+try:
+    import cplex
+    print("✓ CPLEX Python API is pre-installed!")
+    print("  CPLEX version:", cplex.__version__)
+    
+    # Try to create a small model to verify binaries
+    c = cplex.Cplex()
+    print("✓ CPLEX Binary libraries are accessible!")
+    
+    # Try to import docplex (might need to be installed via uv)
+    try:
+        import docplex
+        print("✓ docplex is available!")
+    except ImportError:
+        print("! docplex is not yet installed. You can install it with: uv pip install docplex")
+        
+    print("")
+    print("CPLEX is ready to use! 🚀")
+    
+except ImportError as e:
+    print("✗ CPLEX Python API not found:", str(e))
+    print("  PYTHONPATH:", os.environ.get('PYTHONPATH'))
+    sys.exit(1)
+except Exception as e:
+    print("✗ Error verifying CPLEX:", str(e))
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+EOFPYTHON
+      EOFSCRIPT
+      chmod +x $out/verify-cplex.sh
+      
       # Note: python3 binary is provided by pythonWithPackages in runtimeEnv
       # No need to create a symlink here to avoid collision
       
@@ -484,12 +924,42 @@ in
     copyToRoot = pkgs.buildEnv {
       name = "image-root";
       paths = [ runtimeEnv dockerSetup pkgs.cacert ];
+      ignoreCollisions = true; # Allow multiple packages to provide /bin/python
     };
+
+    # IMPORTANT:
+    # We intentionally do NOT use `runAsRoot` (it would require KVM on this host).
+    # But `copyToRoot` comes from the Nix store, and those paths are immutable and often 0555.
+    # To ensure writable runtime directories for the non-root user, we patch permissions
+    # in the *layer rootfs* right before tarring it via `extraCommands`.
+    extraCommands = ''
+      set -eu
+
+      # Ensure runtime directories exist in the layer
+      mkdir -p tmp tmp/.uv_cache .local/lib/python3.12/site-packages home/python-user app
+
+      # /tmp must be writable for non-root (cplex.log, matplotlib cache, tempfiles, uv cache)
+      chmod 1777 tmp
+      chmod 0777 tmp/.uv_cache
+
+      # /.local is used as writable site-packages for uv/pip at runtime
+      chmod 0777 .local
+      chmod 0777 .local/lib
+      chmod 0777 .local/lib/python3.12
+      chmod 0777 .local/lib/python3.12/site-packages
+
+      # Project and data directories
+      mkdir -p app data
+      chmod 0777 app data
+
+      # Home directory should be writable for the non-root user
+      chmod 0777 home/python-user
+    '';
     
     config = {
       WorkingDir = "/tmp";
       Env = [
-        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
         "PYTHONUNBUFFERED=1"
         "PYTHONDONTWRITEBYTECODE=1"
         # Force uv to use system Python
@@ -497,14 +967,16 @@ in
         "UV_LINK_MODE=copy"
         "UV_PYTHON_SITE_PACKAGES=/.local/lib/python3.12/site-packages"
         "UV_CACHE_DIR=/tmp/.uv_cache"
-        "UV_PYTHON=${systemPython}/bin/python3.12"
-        # Set PATH to include our secure commands - ensure util-linux tools are accessible
-        "PATH=${systemPython}/bin:${runtimeEnv}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin"
+        "UV_PYTHON=/bin/python"
+        # Set PATH - put runtimeEnv/bin first to ensure our python symlink is found
+        "PATH=/bin:${securePythonScript}/bin:${runtimeEnv}/bin:${systemPython}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
         # Set library search path
-        "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64"
+        "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
         # Gurobi environment variables (using gurobi package from nixpkgs)
         "GUROBI_HOME=${pkgs.gurobi}"
         "GRB_LICENSE_FILE=/app/gurobi.lic"
+        # CPLEX environment variables
+        "CPLEX_HOME=/opt/ibm/ILOG/CPLEX_Studio221/cplex"
         # SSL certificate configuration for Gurobi WLS
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "CURL_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -539,4 +1011,8 @@ in
       CapDrop = [ "ALL" ];
       CapAdd = [ "CHOWN" "SETGID" "SETUID" ];
     };
+
+    # IMPORTANT: do NOT set runAsRoot here.
+    # Setting runAsRoot makes dockerTools switch to a Linux VM build layer, which requires KVM.
+    # We instead create /tmp and /.local via copyToRoot (dockerSetup) with correct modes.
   }

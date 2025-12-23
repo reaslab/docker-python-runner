@@ -31,8 +31,21 @@ jobs:
       checks: write
 
     steps:
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        lfs: true # 必须开启 LFS 以便检出 CPLEX 安装包
 
     - name: Install Nix 2.31.1
       run: |
@@ -42,6 +55,9 @@ jobs:
         . /home/runner/.nix-profile/etc/profile.d/nix.sh
         # 验证安装
         nix --version
+
+    - name: Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@main
 
     - name: Configure Nix
       run: |
@@ -420,28 +436,32 @@ jobs:
           exit 1
         fi
         
-        # 测试Python和UV（使用临时文件系统挂载）
+        # 测试Python和UV (不使用 --user root，验证权限修复是否成功)
         echo "Testing Python:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "export PATH=\${PATH} && python --version" || echo "Python not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python --version" || echo "Python not found"
         
         echo "Testing UV:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "export PATH=\${PATH} && uv --version" || echo "UV not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "uv --version" || echo "UV not found"
         
         # 测试安全限制
         echo "Testing security restrictions:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"try: import os; print('ERROR: os should be restricted'); exit(1); except ImportError: print('OK: os is restricted')\"" || echo "Security test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"try: import os; print('ERROR: os should be restricted'); exit(1); except ImportError: print('OK: os is restricted')\"" || echo "Security test failed"
         
         # 测试Gurobi可用性
         echo "Testing Gurobi availability:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import gurobipy; print('OK: Gurobi available')\"" || echo "Gurobi test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import gurobipy; print('OK: Gurobi available')\"" || echo "Gurobi test failed"
         
         # 测试OR-Tools可用性
         echo "Testing OR-Tools availability:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import ortools; from ortools.linear_solver import pywraplp; print('OK: OR-Tools available')\"" || echo "OR-Tools test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import ortools; from ortools.linear_solver import pywraplp; print('OK: OR-Tools available')\"" || echo "OR-Tools test failed"
+        
+        # 测试CPLEX可用性
+        echo "Testing CPLEX availability:"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /verify-cplex.sh || echo "CPLEX test failed"
         
         # 测试PuLP可用性
         echo "Testing PuLP availability:"
-        docker run --rm --tmpfs /tmp:exec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "cd /tmp && python -c \"import pulp; prob = pulp.LpProblem('test', pulp.LpMaximize); x = pulp.LpVariable('x', 0, 10); prob += x; prob.solve(pulp.PULP_CBC_CMD(msg=0)); print('OK: PuLP and CBC solver available')\"" || echo "PuLP test failed"
+        docker run --rm --tmpfs /tmp:exec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "cd /tmp && python -c \"import pulp; prob = pulp.LpProblem('test', pulp.LpMaximize); x = pulp.LpVariable('x', 0, 10); prob += x; prob.solve(pulp.PULP_CBC_CMD(msg=0)); print('OK: PuLP and CBC solver available')\"" || echo "PuLP test failed"
         
         # 测试科学计算包
         echo "Testing scientific packages:"
@@ -471,7 +491,7 @@ jobs:
         echo "**Features:**" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Secure Python 3.12 environment" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ UV package manager" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Optimization solvers: Gurobi, OR-Tools, PuLP" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Optimization solvers: Gurobi, CPLEX, OR-Tools, PuLP" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Scientific computing packages" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Non-root user execution" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Resource limits and security restrictions" >> $GITHUB_STEP_SUMMARY
