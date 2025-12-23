@@ -47,36 +47,14 @@ jobs:
       with:
         lfs: true # 必须开启 LFS 以便检出 CPLEX 安装包
 
-    - name: Install Nix 2.31.1
-      run: |
-        # 安装最新稳定版 Nix 2.31.1 (单用户模式)
-        sh <(curl -L https://nixos.org/nix/install) --no-daemon --yes
-        # 重新加载环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        # 验证安装
-        nix --version
+    - name: Install Nix
+      uses: DeterminateSystems/determinate-nix-action@v16
 
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@main
 
-    - name: Configure Nix
-      run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        # 配置 Nix 以支持 Flakes
-        mkdir -p ~/.config/nix
-        cat > ~/.config/nix/nix.conf << EOF
-        experimental-features = nix-command flakes
-        allow-import-from-derivation = true
-        EOF
-        # 验证配置
-        nix --version
-
     - name: Clean build environment
       run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        
         # 清理 Nix 缓存
         echo "🧹 Cleaning Nix cache..."
         nix-collect-garbage
@@ -93,9 +71,6 @@ jobs:
 
     - name: Setup Nix Flake environment
       run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         
@@ -167,9 +142,6 @@ jobs:
 
     - name: Load Docker image
       run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         
@@ -205,9 +177,6 @@ jobs:
     - name: Tag Docker image
       if: github.event.inputs.push_images != 'false'
       run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         
@@ -269,9 +238,6 @@ jobs:
     - name: Push Docker image
       if: github.event.inputs.push_images != 'false'
       run: |
-        # 加载 Nix 环境
-        . /home/runner/.nix-profile/etc/profile.d/nix.sh
-        
         # 设置环境变量以允许非自由包（Gurobi）
         export NIXPKGS_ALLOW_UNFREE=1
         

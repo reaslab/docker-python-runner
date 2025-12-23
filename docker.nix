@@ -294,6 +294,83 @@ let
     '';
   };
 
+  # COPT (Cardinal Optimizer) 完整安装
+  # 包含求解器二进制文件、共享库和 Python 接口
+  coptVersion = "8.0.2";
+  copt = pkgs.stdenv.mkDerivation {
+    name = "copt-${coptVersion}";
+    src = pkgs.fetchurl {
+      url = "https://pub.shanshu.ai/download/copt/${coptVersion}/linux64/CardinalOptimizer-${coptVersion}-lnx64.tar.gz";
+      sha256 = "1cns2z8cic4rvisxy5bmf60241a6c7a1g1mpxvb13dzwdn94r65v";
+    };
+
+    nativeBuildInputs = [ pkgs.patchelf pkgs.unzip ];
+    buildInputs = [ pkgs.glibc pkgs.zlib pkgs.stdenv.cc.cc.lib pkgs.libffi ];
+    
+    installPhase = ''
+      mkdir -p $out/opt/copt
+      tar -xzf $src -C $out/opt/copt --strip-components=1
+      
+      # 移除不需要的例子和文档以减小镜像体积
+      rm -rf $out/opt/copt/examples $out/opt/copt/docs
+      
+      # 确保权限正确
+      find $out/opt/copt -type d -exec chmod 755 {} +
+      find $out/opt/copt/bin -type f -exec chmod 755 {} +
+      find $out/opt/copt/lib -type f -exec chmod 644 {} +
+    '';
+
+    postFixup = ''
+      echo "Patching COPT binaries and libs for Nix..."
+      RPATH="${pkgs.glibc}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:${pkgs.libffi}/lib"
+      INTERP="${pkgs.glibc}/lib/ld-linux-x86-64.so.2"
+
+      # Patch 所有的二进制执行文件
+      find $out/opt/copt/bin -type f | while read -r f; do
+        if patchelf --print-interpreter "$f" >/dev/null 2>&1; then
+          patchelf --set-interpreter "$INTERP" "$f" || true
+          patchelf --set-rpath "$RPATH" "$f" || true
+        fi
+      done
+
+      # Patch 所有的共享库
+      find $out/opt/copt/lib -name "*.so*" -type f | while read -r lib; do
+        patchelf --set-rpath "$RPATH" "$lib" || true
+      done
+    '';
+  };
+
+  # COPT Python 接口（优先使用 uv pip 安装以获得最佳兼容性）
+  coptPythonPackages = pkgs.runCommand "copt-python-packages" {
+    nativeBuildInputs = [ pythonWithPackages pkgs.uv pkgs.cacert ];
+    __impureHostDeps = [ "/etc/resolv.conf" "/etc/hosts" ];
+  } ''
+    mkdir -p $out/site-packages
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export HOME="$TMPDIR/home"
+    mkdir -p "$HOME"
+    export UV_CACHE_DIR="$TMPDIR/.uv_cache"
+    mkdir -p "$UV_CACHE_DIR"
+    export UV_PYTHON_PREFERENCE="system"
+    export UV_PYTHON="${pythonWithPackages}/bin/python3.12"
+    
+    echo "Installing coptpy via uv pip..."
+    # 尝试从 PyPI 安装，如果失败则从解压后的 copt 目录提取
+    if ${pkgs.uv}/bin/uv pip install --python "$UV_PYTHON" --target $out/site-packages coptpy==${coptVersion} 2>&1; then
+      echo "✅ coptpy installed from PyPI"
+    else
+      echo "⚠️  PyPI install failed, extracting from copt package..."
+      # 查找解压后的 copt 目录中的 python 接口
+      CP_DIR=$(find ${copt}/opt/copt -name "coptpy" -type d | head -n 1)
+      if [ -n "$CP_DIR" ]; then
+        cp -r "$CP_DIR" $out/site-packages/
+      else
+        echo "❌ Error: Could not find coptpy in package"
+        exit 1
+      fi
+    fi
+  '';
+
   # Extract CPLEX Python API
   # First try to find it in the CPLEX installation, otherwise install via uv pip
   cplexPythonPackages = pkgs.runCommand "cplex-python-packages" {
@@ -449,7 +526,7 @@ let
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
@@ -460,8 +537,8 @@ let
     chmod 755 /.local/lib/python3.12/site-packages
     
     # Restrict system tool access - ensure util-linux tools are accessible
-    # Also include CPLEX paths so docplex can find solvers
-    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
+    # Also include CPLEX and COPT paths so docplex/coptpy can find solvers
+    export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux:/opt/copt/bin"
     
     # Restrict environment variables
     unset HOME
@@ -619,7 +696,7 @@ finally:
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     # Some packages (sdists) require a valid HOME during build (e.g. setuptools expanduser()).
@@ -681,6 +758,7 @@ finally:
       secureUvScript
       pkgs.gurobi
       cplex
+      copt
       pkgs.glibc
       pkgs.zlib
       pkgs.ncurses
@@ -726,6 +804,11 @@ finally:
       mkdir -p $out/opt/cplex/lib/python3.12/site-packages
       # Copy CPLEX Python API to /opt/cplex
       cp -r ${cplexPythonPackages}/site-packages/* $out/opt/cplex/lib/python3.12/site-packages/
+      
+      # Create copt directory for Python API
+      mkdir -p $out/opt/copt/lib/python3.12/site-packages
+      # Copy COPT Python API from uv installation
+      cp -r ${coptPythonPackages}/site-packages/* $out/opt/copt/lib/python3.12/site-packages/
       
       # Create uv configuration
       cat > $out/etc/uv/uv.toml << 'EOFUV'
@@ -880,6 +963,51 @@ EOFPYTHON
       EOFSCRIPT
       chmod +x $out/verify-cplex.sh
       
+      # Create COPT verification script
+      cat > $out/verify-copt.sh << 'EOFSCRIPT'
+      #!/bin/bash
+      # Verify COPT is pre-installed and working
+      echo "Verifying COPT installation..."
+      echo ""
+      
+      # Set COPT environment
+      export COPT_HOME=/opt/copt
+      export LD_LIBRARY_PATH=$COPT_HOME/lib:$LD_LIBRARY_PATH
+      
+      python << 'EOFPYTHON'
+import sys
+import os
+
+try:
+    import coptpy
+    print("✓ COPT Python API is pre-installed!")
+    print("  COPT version:", coptpy.Envr().getVersion())
+    
+    # Try to create a small model to verify binaries
+    env = coptpy.Envr()
+    model = env.createModel("verify")
+    print("✓ COPT Binary libraries are accessible!")
+    
+    print("")
+    print("COPT is ready to use! 🚀")
+    
+except ImportError as e:
+    print("✗ COPT Python API not found:", str(e))
+    print("  PYTHONPATH:", os.environ.get('PYTHONPATH'))
+    sys.exit(1)
+except Exception as e:
+    print("✗ Error verifying COPT:", str(e))
+    # It might fail due to no license, but the import should work
+    if "license" in str(e).lower() or "113" in str(e):
+        print("✓ COPT Python API and binaries are loaded (License required for model creation)")
+    else:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+EOFPYTHON
+      EOFSCRIPT
+      chmod +x $out/verify-copt.sh
+      
       # Note: python3 binary is provided by pythonWithPackages in runtimeEnv
       # No need to create a symlink here to avoid collision
       
@@ -959,7 +1087,7 @@ in
     config = {
       WorkingDir = "/tmp";
       Env = [
-        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
         "PYTHONUNBUFFERED=1"
         "PYTHONDONTWRITEBYTECODE=1"
         # Force uv to use system Python
@@ -969,14 +1097,16 @@ in
         "UV_CACHE_DIR=/tmp/.uv_cache"
         "UV_PYTHON=/bin/python"
         # Set PATH - put runtimeEnv/bin first to ensure our python symlink is found
-        "PATH=/bin:${securePythonScript}/bin:${runtimeEnv}/bin:${systemPython}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
+        "PATH=/bin:${securePythonScript}/bin:${runtimeEnv}/bin:${systemPython}/bin:${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux:/opt/copt/bin"
         # Set library search path
-        "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux"
+        "LD_LIBRARY_PATH=${runtimeEnv}/lib:${runtimeEnv}/lib64:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux:/opt/copt/lib"
         # Gurobi environment variables (using gurobi package from nixpkgs)
         "GUROBI_HOME=${pkgs.gurobi}"
         "GRB_LICENSE_FILE=/app/gurobi.lic"
         # CPLEX environment variables
         "CPLEX_HOME=/opt/ibm/ILOG/CPLEX_Studio221/cplex"
+        # COPT environment variables
+        "COPT_HOME=/opt/copt"
         # SSL certificate configuration for Gurobi WLS
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "CURL_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"

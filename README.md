@@ -9,6 +9,7 @@ A secure, production-ready Docker environment for Python development with UV pac
 - **UV Package Manager**: Fast Python package and dependency manager
 - **Optimization Solvers Pre-installed**:
   - **Gurobi**: Commercial optimization solver (12.0.3) - requires license
+  - **COPT**: Cardinal Optimizer (8.0.2) - requires license
   - **CPLEX**: IBM ILOG CPLEX Optimization Studio (22.1.2) - requires license
   - **OR-Tools**: Google's open-source suite (GLOP, CBC, SCIP, CP-SAT) - no license required
 - **Non-root User**: Runs as non-privileged user for security
@@ -96,6 +97,23 @@ print(f'CPLEX Version: {cplex.__version__}')
 docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
 ```
 
+### With COPT Optimization
+
+```bash
+# Run COPT optimization code
+# COPT is pre-installed at /opt/copt
+docker run --rm -v $(pwd):/app \
+  -e COPT_LICENSE_FILE=/app/client.ini \
+  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+import coptpy
+print(f'COPT Version: {coptpy.Envr().getVersion()}')
+# ... your optimization code ...
+"
+
+# Verify COPT installation
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-copt.sh
+```
+
 ### With OR-Tools Optimization
 
 ```bash
@@ -146,6 +164,7 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortoo
 - **Visualization**: seaborn
 - **Optimization**: 
   - **gurobipy** (Gurobi 12.0.3) - Pre-installed, requires license
+  - **coptpy** (COPT 8.0.2) - Pre-installed, requires license
   - **cplex** (IBM CPLEX 22.1.2) - Pre-installed, requires license
   - **ortools** (Google OR-Tools) - Pre-installed, no license required ✨
 - **Build Tools**: cython
@@ -241,6 +260,9 @@ docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker
 
 # Test CPLEX (verify installation)
 docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
+
+# Test COPT (verify installation)
+docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-copt.sh
 
 # Test OR-Tools (pre-installed, verify)
 docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh
