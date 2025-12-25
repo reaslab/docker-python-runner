@@ -297,6 +297,9 @@ let
   # COPT (Cardinal Optimizer) 完整安装
   # 包含求解器二进制文件、共享库和 Python 接口
   coptVersion = "8.0.2";
+  # MOSEK Python API (PyPI package)
+  # Latest stable: 11.0.30 (Released: Nov. 18, 2025)
+  mosekVersion = "11.0.30";
   copt = pkgs.stdenv.mkDerivation {
     name = "copt-${coptVersion}";
     src = pkgs.fetchurl {
@@ -339,6 +342,35 @@ let
       done
     '';
   };
+
+  # MOSEK Python 接口（直接通过 uv pip 从 PyPI 安装）
+  # MOSEK 提供免费的学术许可证和30天试用许可证
+  # PyPI: https://pypi.org/project/Mosek/
+  # 学术许可证: https://www.mosek.com/products/academic-licenses/
+  # 固定版本以保证镜像可复现
+  mosekPythonPackages = pkgs.runCommand "mosek-python-packages" {
+    nativeBuildInputs = [ pythonWithPackages pkgs.uv pkgs.cacert ];
+    __impureHostDeps = [ "/etc/resolv.conf" "/etc/hosts" ];
+  } ''
+    mkdir -p $out/site-packages
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export HOME="$TMPDIR/home"
+    mkdir -p "$HOME"
+    export UV_CACHE_DIR="$TMPDIR/.uv_cache"
+    mkdir -p "$UV_CACHE_DIR"
+    export UV_PYTHON_PREFERENCE="system"
+    export UV_PYTHON="${pythonWithPackages}/bin/python3.12"
+    
+    echo "Installing MOSEK Python API (Mosek==${mosekVersion}) via uv pip..."
+    if ${pkgs.uv}/bin/uv pip install --python "$UV_PYTHON" --target $out/site-packages "Mosek==${mosekVersion}" 2>&1; then
+      echo "✅ MOSEK Python package installed from PyPI"
+      # 显示安装的版本
+      ${pkgs.uv}/bin/uv pip list --python "$UV_PYTHON" | grep -i mosek || true
+    else
+      echo "❌ Error: Failed to install MOSEK Python package from PyPI"
+      exit 1
+    fi
+  '';
 
   # COPT Python 接口（优先使用 uv pip 安装以获得最佳兼容性）
   coptPythonPackages = pkgs.runCommand "copt-python-packages" {
@@ -526,7 +558,7 @@ let
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/opt/mosek/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     
@@ -696,7 +728,7 @@ finally:
     
     # Set restricted environment
     # Use /.local instead of /tmp/.local because /tmp is mounted with noexec flag
-    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+    export PYTHONPATH="/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/opt/mosek/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
     export PYTHONUNBUFFERED=1
     export PYTHONDONTWRITEBYTECODE=1
     # Some packages (sdists) require a valid HOME during build (e.g. setuptools expanduser()).
@@ -809,6 +841,11 @@ finally:
       mkdir -p $out/opt/copt/lib/python3.12/site-packages
       # Copy COPT Python API from uv installation
       cp -r ${coptPythonPackages}/site-packages/* $out/opt/copt/lib/python3.12/site-packages/
+      
+      # Create mosek directory for Python API
+      mkdir -p $out/opt/mosek/lib/python3.12/site-packages
+      # Copy MOSEK Python API from uv installation
+      cp -r ${mosekPythonPackages}/site-packages/* $out/opt/mosek/lib/python3.12/site-packages/
       
       # Create uv configuration
       cat > $out/etc/uv/uv.toml << 'EOFUV'
@@ -1087,7 +1124,7 @@ in
     config = {
       WorkingDir = "/tmp";
       Env = [
-        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
+        "PYTHONPATH=/app:/opt/ortools/lib/python3.12/site-packages:/opt/cplex/lib/python3.12/site-packages:/opt/copt/lib/python3.12/site-packages:/opt/mosek/lib/python3.12/site-packages:/.local/lib/python3.12/site-packages"
         "PYTHONUNBUFFERED=1"
         "PYTHONDONTWRITEBYTECODE=1"
         # Force uv to use system Python
@@ -1107,6 +1144,8 @@ in
         "CPLEX_HOME=/opt/ibm/ILOG/CPLEX_Studio221/cplex"
         # COPT environment variables
         "COPT_HOME=/opt/copt"
+        # MOSEK environment variables (license file will be mounted at runtime)
+        "MOSEKLM_LICENSE_FILE=/tmp/mosek.lic"
         # SSL certificate configuration for Gurobi WLS
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "CURL_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
