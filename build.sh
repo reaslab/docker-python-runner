@@ -43,11 +43,25 @@ docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "docker-python-
 done
 
 echo "Building with Nix dockerTools..."
-# Configure Nix to support Flakes, consistent with workflow
+# Configure Nix to support Flakes with optimizations
 mkdir -p ~/.config/nix
 cat > ~/.config/nix/nix.conf << EOF
 experimental-features = nix-command flakes
 allow-import-from-derivation = true
+# Build optimizations
+max-jobs = auto
+cores = 0
+keep-outputs = true
+keep-derivations = true
+# Binary cache (speeds up subsequent builds)
+substituters = https://cache.nixos.org https://nix-community.cachix.org
+trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+build-use-substitutes = true
+auto-optimise-store = true
+# Network optimization
+stalled-download-timeout = 300
+connect-timeout = 60
+download-attempts = 5
 EOF
 
 # Set environment variable to allow unfree packages (Gurobi)
@@ -60,15 +74,33 @@ echo "Setting Docker image timestamp to: $CURRENT_TIMESTAMP"
 # Use environment variable to pass timestamp to Nix
 export DOCKER_IMAGE_TIMESTAMP="$CURRENT_TIMESTAMP"
 
-# Use nix build command, consistent with workflow
-nix build .#docker-image --option sandbox false --impure
+# Use nix build command with optimizations
+echo "⏱️  Building Docker image (this will be fast on subsequent builds)..."
+nix build .#docker-image \
+  --option sandbox false \
+  --impure \
+  --keep-going \
+  --cores 0 \
+  --max-jobs auto \
+  --show-trace
 
 echo "Loading Nix image into Docker..."
+# Check if result exists and is valid
+if [ ! -L result ] || [ ! -e result ]; then
+    echo "❌ Error: Nix build result not found or invalid"
+    exit 1
+fi
+
 # Record image IDs and tags before loading
 BEFORE_IMAGES=$(docker images --format "{{.ID}} {{.Repository}}:{{.Tag}}" | sort)
 
-# Load Nix-built image
-docker load < result
+# Load Nix-built image (optimized: using pv for progress if available)
+if command -v pv &> /dev/null; then
+    echo "📦 Loading image with progress indicator..."
+    pv result | docker load
+else
+    docker load < result
+fi
 
 # Record image IDs and tags after loading
 AFTER_IMAGES=$(docker images --format "{{.ID}} {{.Repository}}:{{.Tag}}" | sort)

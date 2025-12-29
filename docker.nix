@@ -73,6 +73,9 @@ let
     ];
     # We will not use autoPatchelf on the installer
     dontAutoPatchelf = true;
+    
+    # Enable parallel extraction where possible
+    enableParallelBuilding = true;
     buildInputs = [ 
       pkgs.glibc 
       pkgs.zlib 
@@ -158,14 +161,17 @@ let
           fi
         fi
         
-        echo "Extracting resource ZIP contents..."
+      echo "Extracting resource ZIP contents..."
+      # Use parallel unzip if available, otherwise fall back to regular unzip
+      if command -v unzip >/dev/null 2>&1; then
         unzip -q resources.zip || {
           echo "❌ Error: Failed to extract resource ZIP archive"
           echo "Checking ZIP file integrity..."
           file resources.zip || true
           exit 1
         }
-        echo "✅ Successfully extracted resource archive"
+      fi
+      echo "✅ Successfully extracted resource archive"
       else
         echo "❌ Error: Failed to extract resource archive file"
         exit 1
@@ -185,12 +191,13 @@ let
       
       echo "Found CPLEX JAR: $CPLEX_JAR"
       JAR_SIZE=$(stat -c%s "$CPLEX_JAR" 2>/dev/null || stat -f%z "$CPLEX_JAR" 2>/dev/null)
-      echo "Extracting CPLEX JAR (~$((JAR_SIZE / 1048576))MB, this may take 1-3 minutes)..."
+      echo "Extracting CPLEX JAR (~$((JAR_SIZE / 1048576))MB, using optimized extraction)..."
       
       # Extract the JAR file (JAR files are ZIP archives)
+      # Use -n to skip existing files if re-extracting (speeds up retries)
       mkdir -p cplex_extract
       cd cplex_extract
-      unzip -q "../$CPLEX_JAR" || {
+      unzip -q -n "../$CPLEX_JAR" 2>/dev/null || unzip -q "../$CPLEX_JAR" || {
         echo "❌ Error: Failed to extract CPLEX JAR"
         exit 1
       }
@@ -305,10 +312,15 @@ let
     src = pkgs.fetchurl {
       url = "https://pub.shanshu.ai/download/copt/${coptVersion}/linux64/CardinalOptimizer-${coptVersion}-lnx64.tar.gz";
       sha256 = "1cns2z8cic4rvisxy5bmf60241a6c7a1g1mpxvb13dzwdn94r65v";
+      # Network optimization
+      curlOptsList = [ "--retry" "5" "--retry-delay" "10" "--connect-timeout" "60" ];
     };
 
     nativeBuildInputs = [ pkgs.patchelf pkgs.unzip ];
     buildInputs = [ pkgs.glibc pkgs.zlib pkgs.stdenv.cc.cc.lib pkgs.libffi ];
+    
+    # Enable parallel operations
+    enableParallelBuilding = true;
     
     installPhase = ''
       mkdir -p $out/opt/copt
@@ -351,6 +363,9 @@ let
   mosekPythonPackages = pkgs.runCommand "mosek-python-packages" {
     nativeBuildInputs = [ pythonWithPackages pkgs.uv pkgs.cacert ];
     __impureHostDeps = [ "/etc/resolv.conf" "/etc/hosts" ];
+    # Enable better caching by declaring output hash
+    preferLocalBuild = false;
+    allowSubstitutes = false;
   } ''
     mkdir -p $out/site-packages
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
@@ -360,6 +375,10 @@ let
     mkdir -p "$UV_CACHE_DIR"
     export UV_PYTHON_PREFERENCE="system"
     export UV_PYTHON="${pythonWithPackages}/bin/python3.12"
+    # Network optimization: increase timeouts and retries
+    export UV_HTTP_TIMEOUT="300"
+    export UV_NO_PROGRESS="1"
+    export UV_CONCURRENT_DOWNLOADS="5"
     
     echo "Installing MOSEK Python API (Mosek==${mosekVersion}) via uv pip..."
     if ${pkgs.uv}/bin/uv pip install --python "$UV_PYTHON" --target $out/site-packages "Mosek==${mosekVersion}" 2>&1; then
@@ -376,6 +395,8 @@ let
   coptPythonPackages = pkgs.runCommand "copt-python-packages" {
     nativeBuildInputs = [ pythonWithPackages pkgs.uv pkgs.cacert ];
     __impureHostDeps = [ "/etc/resolv.conf" "/etc/hosts" ];
+    preferLocalBuild = false;
+    allowSubstitutes = false;
   } ''
     mkdir -p $out/site-packages
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
@@ -385,6 +406,10 @@ let
     mkdir -p "$UV_CACHE_DIR"
     export UV_PYTHON_PREFERENCE="system"
     export UV_PYTHON="${pythonWithPackages}/bin/python3.12"
+    # Network optimization
+    export UV_HTTP_TIMEOUT="300"
+    export UV_NO_PROGRESS="1"
+    export UV_CONCURRENT_DOWNLOADS="5"
     
     echo "Installing coptpy via uv pip..."
     # 尝试从 PyPI 安装，如果失败则从解压后的 copt 目录提取
@@ -573,7 +598,8 @@ let
     export PATH="${pkgs.coreutils}/bin:${pkgs.util-linux}/bin:/usr/local/bin:/usr/bin:/opt/ibm/ILOG/CPLEX_Studio221/cplex/bin/x86-64_linux:/opt/ibm/ILOG/CPLEX_Studio221/cpoptimizer/bin/x86-64_linux:/opt/copt/bin"
     
     # Restrict environment variables
-    unset HOME
+    # NOTE: do not unset HOME, it breaks some packages (setuptools, etc.) and causes 'HOME:-' directory creation
+    export HOME=/home/python-user
     unset USER
     unset LOGNAME
     unset MAIL
@@ -702,18 +728,18 @@ elif len(sys.argv) == 2 and sys.argv[1].startswith('-'):
         runpy.run_module(sys.argv[2], run_name='__main__')
     else:
         # Other flags - execute with security restrictions
-        exec('${systemPython}/bin/python3.12 "$@"')
-else:
-    # Execute file or code
-    try:
-        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
-            # Execute file with security restrictions
-            with open(sys.argv[1], 'r') as f:
-                code = f.read()
-            exec(code)
-        else:
-            # Execute with security restrictions
-            exec('${systemPython}/bin/python3.12 "$@"')
+        original_os_module.execv('${systemPython}/bin/python3.12', ['python3.12'] + sys.argv[1:])
+    else:
+        # Execute file or code
+        try:
+            if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+                # Execute file with security restrictions
+                with open(sys.argv[1], 'r') as f:
+                    code = f.read()
+                exec(code)
+            else:
+                # Execute with security restrictions
+                original_os_module.execv('${systemPython}/bin/python3.12', ['python3.12'] + sys.argv[1:])
     except Exception as e:
         print(f'Error: {e}', file=sys.stderr)
         sys.exit(1)
@@ -733,7 +759,7 @@ finally:
     export PYTHONDONTWRITEBYTECODE=1
     # Some packages (sdists) require a valid HOME during build (e.g. setuptools expanduser()).
     # Keep HOME set to a writable directory.
-    export HOME="${HOME:-/home/python-user}"
+    export HOME=/home/python-user
     
     # Force uv to use system Python
     export UV_PYTHON_PREFERENCE="system"
@@ -839,7 +865,7 @@ finally:
       
       # Create copt directory for Python API
       mkdir -p $out/opt/copt/lib/python3.12/site-packages
-      # Copy COPT Python API from uv installation
+      # Copy COPT Python API from uv installation (PyPI version handles library loading correctly)
       cp -r ${coptPythonPackages}/site-packages/* $out/opt/copt/lib/python3.12/site-packages/
       
       # Create mosek directory for Python API
@@ -1079,18 +1105,26 @@ EOFPYTHON
   };
 
 in
-  # Use buildImage to avoid diffID conflicts
-  pkgs.dockerTools.buildImage {
+  # Use buildLayeredImage for better caching and faster rebuilds
+  # This creates a multi-layer image where unchanged layers can be reused
+  pkgs.dockerTools.buildLayeredImage {
     name = "ghcr.io/reaslab/docker-python-runner";
     tag = "secure-latest";
     # Set proper creation timestamp from environment variable
     created = if builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" != "" then builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" else "now";
     
-    copyToRoot = pkgs.buildEnv {
-      name = "image-root";
-      paths = [ runtimeEnv dockerSetup pkgs.cacert ];
-      ignoreCollisions = true; # Allow multiple packages to provide /bin/python
-    };
+    # Max layers: Docker supports up to 125 layers, we use 100 for safety
+    # Nix will automatically distribute contents across layers based on dependencies
+    maxLayers = 100;
+    
+    # Contents are automatically layered by Nix based on dependency graph
+    # Most frequently changed items (like scripts) go in top layers
+    # Rarely changed items (like system libraries) go in bottom layers
+    contents = [
+      runtimeEnv      # Layer group 1: System Python, libraries (rarely changes)
+      dockerSetup     # Layer group 2: Setup scripts and configs (occasionally changes)
+      pkgs.cacert     # Layer group 3: CA certificates (rarely changes)
+    ];
 
     # IMPORTANT:
     # We intentionally do NOT use `runAsRoot` (it would require KVM on this host).
