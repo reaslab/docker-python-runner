@@ -28,6 +28,9 @@ let
     gurobipy
     pulp  # PuLP - Python Linear Programming (no protobuf dependency)
     # Exclude: yfinance (protobuf 6.x conflicts), ortools (installed separately)
+    # Data processing packages
+    openpyxl  # Excel file support for pandas
+    xlrd  # Excel file support for pandas (legacy .xls format)
   ]);
 
   # Separate OR-Tools environment (will be copied to /.local)
