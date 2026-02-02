@@ -67,7 +67,8 @@ jobs:
         docker builder prune -f
         
         # 清理可能冲突的镜像
-        docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No existing image to remove"
+        docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No secure-latest existing image to remove"
+        docker rmi ghcr.io/reaslab/docker-python-runner:latest 2>/dev/null || echo "   No latest existing image to remove"
 
     - name: Setup Nix Flake environment
       run: |
@@ -209,19 +210,19 @@ jobs:
           TAGS=()
           
           # 总是创建 latest 标签
-          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\")
+          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\")
           
           # 根据触发类型创建版本特定标签
           if [ \"${{ github.event_name }}\" = \"push\" ] && [ \"${{ github.ref }}\" = \"refs/heads/main\" ]; then
             # Main branch push: 创建时间戳和 SHA 标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\")
           elif [ \"${{ github.event_name }}\" = \"workflow_dispatch\" ]; then
             # 手动触发: 只创建时间戳标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
           elif [ \"${{ github.event_name }}\" = \"schedule\" ]; then
             # 定时触发: 只创建时间戳标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
           fi
           
           # 使用所有标签进行标记
@@ -252,19 +253,19 @@ jobs:
           TAGS=()
           
           # 总是创建 latest 标签
-          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\")
+          TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\")
           
           # 根据触发类型创建版本特定标签
           if [ \"${{ github.event_name }}\" = \"push\" ] && [ \"${{ github.ref }}\" = \"refs/heads/main\" ]; then
             # Main branch push: 创建时间戳和 SHA 标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-${{ github.sha }}\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\")
           elif [ \"${{ github.event_name }}\" = \"workflow_dispatch\" ]; then
             # 手动触发: 只创建时间戳标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
           elif [ \"${{ github.event_name }}\" = \"schedule\" ]; then
             # 定时触发: 只创建时间戳标签
-            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-\$(date +%Y%m%d-%H%M%S)\")
+            TAGS+=(\"${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(date +%Y%m%d-%H%M%S)\")
           fi
           
           # 推送所有标签
@@ -280,7 +281,7 @@ jobs:
       if: github.event.inputs.push_images != 'false'
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         format: 'sarif'
         output: 'trivy-results.sarif'
       continue-on-error: true
@@ -309,7 +310,7 @@ jobs:
           
           # Show scan summary
           echo "### 📊 Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image scanned:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image scanned:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Scan format:** SARIF" >> $GITHUB_STEP_SUMMARY
           echo "- **Results file:** \`trivy-results.sarif\`" >> $GITHUB_STEP_SUMMARY
           
@@ -386,14 +387,14 @@ jobs:
         echo "Testing Docker image functionality..."
         
         # 拉取镜像
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         
         # 基本验证
-        echo "Image size: $(docker images --format '{{.Size}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
-        echo "Image user: $(docker inspect --format='{{.Config.User}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest)"
+        echo "Image size: $(docker images --format '{{.Size}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest)"
+        echo "Image user: $(docker inspect --format='{{.Config.User}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest)"
         
         # 测试容器创建
-        CONTAINER_ID=$(docker create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest echo "test")
+        CONTAINER_ID=$(docker create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest echo "test")
         if [ $? -eq 0 ]; then
           echo "✅ Container creation successful"
           docker rm $CONTAINER_ID
@@ -404,34 +405,34 @@ jobs:
         
         # 测试Python和UV (不使用 --user root，验证权限修复是否成功)
         echo "Testing Python:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python --version" || echo "Python not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "python --version" || echo "Python not found"
         
         echo "Testing UV:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "uv --version" || echo "UV not found"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "uv --version" || echo "UV not found"
         
         # 测试安全限制
         echo "Testing security restrictions:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"try: import os; print('ERROR: os should be restricted'); exit(1); except ImportError: print('OK: os is restricted')\"" || echo "Security test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "python -c \"try: import os; print('ERROR: os should be restricted'); exit(1); except ImportError: print('OK: os is restricted')\"" || echo "Security test failed"
         
         # 测试Gurobi可用性
         echo "Testing Gurobi availability:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import gurobipy; print('OK: Gurobi available')\"" || echo "Gurobi test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "python -c \"import gurobipy; print('OK: Gurobi available')\"" || echo "Gurobi test failed"
         
         # 测试OR-Tools可用性
         echo "Testing OR-Tools availability:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import ortools; from ortools.linear_solver import pywraplp; print('OK: OR-Tools available')\"" || echo "OR-Tools test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "python -c \"import ortools; from ortools.linear_solver import pywraplp; print('OK: OR-Tools available')\"" || echo "OR-Tools test failed"
         
         # 测试CPLEX可用性
         echo "Testing CPLEX availability:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /verify-cplex.sh || echo "CPLEX test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /verify-cplex.sh || echo "CPLEX test failed"
         
         # 测试PuLP可用性
         echo "Testing PuLP availability:"
-        docker run --rm --tmpfs /tmp:exec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "cd /tmp && python -c \"import pulp; prob = pulp.LpProblem('test', pulp.LpMaximize); x = pulp.LpVariable('x', 0, 10); prob += x; prob.solve(pulp.PULP_CBC_CMD(msg=0)); print('OK: PuLP and CBC solver available')\"" || echo "PuLP test failed"
+        docker run --rm --tmpfs /tmp:exec,nosuid,size=100m ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "cd /tmp && python -c \"import pulp; prob = pulp.LpProblem('test', pulp.LpMaximize); x = pulp.LpVariable('x', 0, 10); prob += x; prob.solve(pulp.PULP_CBC_CMD(msg=0)); print('OK: PuLP and CBC solver available')\"" || echo "PuLP test failed"
         
         # 测试科学计算包
         echo "Testing scientific packages:"
-        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:secure-latest /bin/bash -c "python -c \"import numpy, scipy, pandas; print('OK: Scientific packages available')\"" || echo "Scientific packages test failed"
+        docker run --rm --tmpfs /tmp:noexec,nosuid,size=100m --user root ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest /bin/bash -c "python -c \"import numpy, scipy, pandas; print('OK: Scientific packages available')\"" || echo "Scientific packages test failed"
         
         echo "✅ All tests completed successfully"
 
@@ -448,7 +449,7 @@ jobs:
         echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-        echo "- \`secure-latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "- \`latest\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Build System:**" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ Nix Flakes for reproducible builds" >> $GITHUB_STEP_SUMMARY

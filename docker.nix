@@ -1287,7 +1287,7 @@ in
   # This creates a multi-layer image where unchanged layers can be reused
   pkgs.dockerTools.buildLayeredImage {
     name = "ghcr.io/reaslab/docker-python-runner";
-    tag = "secure-latest";
+    tag = "latest";
     # Set proper creation timestamp from environment variable
     created = if builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" != "" then builtins.getEnv "DOCKER_IMAGE_TIMESTAMP" else "now";
     

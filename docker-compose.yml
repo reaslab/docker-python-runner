@@ -7,7 +7,7 @@ services:
       dockerfile_inline: |
         FROM scratch
         # This service uses the Nix-built image directly
-    image: ghcr.io/reaslab/docker-python-runner:secure-latest
+    image: ghcr.io/reaslab/docker-python-runner:latest
     container_name: python-secure
     volumes:
       - ./test:/app
@@ -36,7 +36,7 @@ services:
       - python-network
 
   python-dev:
-    image: ghcr.io/reaslab/docker-python-runner:secure-latest
+    image: ghcr.io/reaslab/docker-python-runner:latest
     container_name: python-dev
     volumes:
       - ./test:/app

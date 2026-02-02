@@ -29,7 +29,7 @@ else
 fi
 
 # Remove target tag
-docker rmi ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "   No existing tag to remove"
+docker rmi ghcr.io/reaslab/docker-python-runner:latest 2>/dev/null || echo "   No existing tag to remove"
 
 # Clean up all dangling images
 echo "🧹 Cleaning up dangling images..."
@@ -140,25 +140,25 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
 
 echo "   Creating tags with image ID: $NEW_IMAGE_ID"
-echo "   - ghcr.io/reaslab/docker-python-runner:secure-latest"
-echo "   - ghcr.io/reaslab/docker-python-runner:secure-$TIMESTAMP"
-echo "   - ghcr.io/reaslab/docker-python-runner:secure-$SHORT_SHA"
+echo "   - ghcr.io/reaslab/docker-python-runner:latest"
+echo "   - ghcr.io/reaslab/docker-python-runner:$TIMESTAMP"
+echo "   - ghcr.io/reaslab/docker-python-runner:$SHORT_SHA"
 
 # Create multiple tags, consistent with workflow
-docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-latest
-docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-$TIMESTAMP
-docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:secure-$SHORT_SHA
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:latest
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:$TIMESTAMP
+docker tag $NEW_IMAGE_ID ghcr.io/reaslab/docker-python-runner:$SHORT_SHA
 
 # Verify final image state
 echo "🔍 Verifying final image state..."
-FINAL_IMAGE_ID=$(docker images --format "{{.ID}}" ghcr.io/reaslab/docker-python-runner:secure-latest 2>/dev/null || echo "")
+FINAL_IMAGE_ID=$(docker images --format "{{.ID}}" ghcr.io/reaslab/docker-python-runner:latest 2>/dev/null || echo "")
 if [ -n "$FINAL_IMAGE_ID" ]; then
     echo "   Final image ID: $FINAL_IMAGE_ID"
-    echo "   Created: $(docker images --format "{{.CreatedAt}}" ghcr.io/reaslab/docker-python-runner:secure-latest)"
-    echo "   Size: $(docker images --format "{{.Size}}" ghcr.io/reaslab/docker-python-runner:secure-latest)"
+    echo "   Created: $(docker images --format "{{.CreatedAt}}" ghcr.io/reaslab/docker-python-runner:latest)"
+    echo "   Size: $(docker images --format "{{.Size}}" ghcr.io/reaslab/docker-python-runner:latest)"
     
     # Check if other images use the same ID
-    DUPLICATE_TAGS=$(docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | awk -v target_id="$FINAL_IMAGE_ID" '$2 == target_id && $1 != "ghcr.io/reaslab/docker-python-runner:secure-latest" {print $1}')
+    DUPLICATE_TAGS=$(docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | awk -v target_id="$FINAL_IMAGE_ID" '$2 == target_id && $1 != "ghcr.io/reaslab/docker-python-runner:latest" {print $1}')
     
     if [ -n "$DUPLICATE_TAGS" ]; then
         echo "   ⚠️  Warning: Found duplicate image IDs:"
@@ -189,4 +189,4 @@ echo "   - Network: Restricted (disabled by default)"
 echo "   - Tools: Minimal set (bash, coreutils, curl, tar, gzip)"
 echo "   - Compilation Tools: Removed for security"
 echo "   - Module Installation: Support via UV installation to /.local/lib/python3.12/site-packages"
-echo "Image: ghcr.io/reaslab/docker-python-runner:secure-latest"
+echo "Image: ghcr.io/reaslab/docker-python-runner:latest"

@@ -5,7 +5,7 @@
 # Default values
 REGISTRY ?= ghcr.io
 IMAGE_NAME ?= reaslab/docker-python-runner
-TAG ?= secure-latest
+TAG ?= latest
 
 help: ## Show this help message
 	@echo "Available targets:"

@@ -25,19 +25,19 @@ Prebuilt images are available on [GitHub Container Registry](https://github.com/
 
 ```bash
 # Pull the latest secure image
-docker pull ghcr.io/reaslab/docker-python-runner:secure-latest
+docker pull ghcr.io/reaslab/docker-python-runner:latest
 
 # Run a Python container
-docker run --rm -it ghcr.io/reaslab/docker-python-runner:secure-latest python --version
+docker run --rm -it ghcr.io/reaslab/docker-python-runner:latest python --version
 ```
 
 ### Available Tags
 
 | Image Tag | Description |
 |-----------|-------------|
-| `secure-latest` | Latest secure Python 3.12 with UV and Gurobi |
-| `secure-{timestamp}` | Timestamped version (e.g., `secure-20250115-143022`) |
-| `secure-{sha}` | Git commit SHA version (e.g., `secure-a1b2c3d`) |
+| `latest` | Latest secure Python 3.12 with UV and Gurobi |
+| `{timestamp}` | Timestamped version (e.g., `20250115-143022`) |
+| `{sha}` | Git commit SHA version (e.g., `a1b2c3d`) |
 
 ## Usage
 
@@ -45,26 +45,26 @@ docker run --rm -it ghcr.io/reaslab/docker-python-runner:secure-latest python --
 
 ```bash
 # Run Python code
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python -c "print('Hello, World!')"
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest python -c "print('Hello, World!')"
 
 # Interactive shell
-docker run --rm -it ghcr.io/reaslab/docker-python-runner:secure-latest bash
+docker run --rm -it ghcr.io/reaslab/docker-python-runner:latest bash
 
 # Run with volume mount
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest python /app/script.py
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:latest python /app/script.py
 ```
 
 ### With UV Package Manager
 
 ```bash
 # Create a new project
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv init my-project
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:latest uv init my-project
 
 # Install packages
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv add numpy pandas
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:latest uv add numpy pandas
 
 # Run with dependencies
-docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:secure-latest uv run python script.py
+docker run --rm -v $(pwd):/app ghcr.io/reaslab/docker-python-runner:latest uv run python script.py
 ```
 
 ### With Gurobi Optimization
@@ -78,7 +78,7 @@ docker run --rm \
   -v $(pwd):/app \
   -v /path/to/gurobi.lic:/app/gurobi.lic:ro \
   -e GRB_LICENSE_FILE=/app/gurobi.lic \
-  ghcr.io/reaslab/docker-python-runner:secure-latest python optimization.py
+  ghcr.io/reaslab/docker-python-runner:latest python optimization.py
 ```
 
 ### With CPLEX Optimization
@@ -87,14 +87,14 @@ docker run --rm \
 # Run CPLEX optimization code
 # CPLEX is pre-installed at /opt/ibm/ILOG/CPLEX_Studio221
 docker run --rm -v $(pwd):/app \
-  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+  ghcr.io/reaslab/docker-python-runner:latest python -c "
 import cplex
 print(f'CPLEX Version: {cplex.__version__}')
 # ... your optimization code ...
 "
 
 # Verify CPLEX installation
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-cplex.sh
 ```
 
 ### With COPT Optimization
@@ -104,14 +104,14 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex
 # COPT is pre-installed at /opt/copt
 docker run --rm -v $(pwd):/app \
   -e COPT_LICENSE_FILE=/app/client.ini \
-  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+  ghcr.io/reaslab/docker-python-runner:latest python -c "
 import coptpy
 print(f'COPT Version: {coptpy.Envr().getVersion()}')
 # ... your optimization code ...
 "
 
 # Verify COPT installation
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-copt.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-copt.sh
 ```
 
 ### With OR-Tools Optimization
@@ -120,7 +120,7 @@ docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-copt.
 # OR-Tools is pre-installed, no license required!
 # Run optimization code directly
 docker run --rm -v $(pwd):/app \
-  ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+  ghcr.io/reaslab/docker-python-runner:latest python -c "
 from ortools.linear_solver import pywraplp
 
 # Create a GLOP solver
@@ -144,7 +144,7 @@ if status == pywraplp.Solver.OPTIMAL:
 "
 
 # Verify OR-Tools installation
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-ortools.sh
 ```
 
 ## Security Features
@@ -215,7 +215,7 @@ nix-build docker.nix --option sandbox false
 docker load < result
 
 # Tag the image
-docker tag <image-id> ghcr.io/reaslab/docker-python-runner:secure-latest
+docker tag <image-id> ghcr.io/reaslab/docker-python-runner:latest
 ```
 
 ### Using Build Script
@@ -228,7 +228,7 @@ docker tag <image-id> ghcr.io/reaslab/docker-python-runner:secure-latest
 # 1. Clean up old images
 # 2. Build with Nix dockerTools
 # 3. Load into Docker
-# 4. Tag as secure-latest
+# 4. Tag as latest
 ```
 
 ### CI/CD Workflow
@@ -242,33 +242,33 @@ The Docker image is automatically built and pushed using **Ubuntu** runners when
 
 **Build Environment**: Ubuntu Linux with Nix Flakes for reproducible builds.
 **Image Tags**: 
-- `secure-latest` - Latest stable version
-- `secure-{timestamp}` - Timestamped version
-- `secure-{sha}` - Git commit SHA version
+- `latest` - Latest stable version
+- `{timestamp}` - Timestamped version
+- `{sha}` - Git commit SHA version
 
 ### Testing
 
 ```bash
 # Test Python version
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python --version
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest python --version
 
 # Test UV installation
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest uv --version
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest uv --version
 
 # Test Gurobi (requires license)
-docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-runner:secure-latest python -c "import gurobipy; print('Gurobi available')"
+docker run --rm -v /path/to/gurobi.lic:/app/gurobi.lic:ro ghcr.io/reaslab/docker-python-runner:latest python -c "import gurobipy; print('Gurobi available')"
 
 # Test CPLEX (verify installation)
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-cplex.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-cplex.sh
 
 # Test COPT (verify installation)
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-copt.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-copt.sh
 
 # Test OR-Tools (pre-installed, verify)
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest /verify-ortools.sh
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest /verify-ortools.sh
 
 # Test security restrictions
-docker run --rm ghcr.io/reaslab/docker-python-runner:secure-latest python -c "
+docker run --rm ghcr.io/reaslab/docker-python-runner:latest python -c "
 try:
     import os
     print('ERROR: os module should be restricted')
