@@ -24,6 +24,7 @@ let
     matplotlib
     scikit-learn
     seaborn
+    networkx  # Graphs for optimization (e.g. VRP, routing)
     # Optimization solvers
     gurobipy
     pulp  # PuLP - Python Linear Programming (no protobuf dependency)
@@ -795,6 +796,18 @@ finally:
     mkdir -p /.local/lib/python3.12/site-packages
     mkdir -p "$HOME" || true
     
+    # For "uv pip install", ensure --target points to writable dir (Nix store is read-only)
+    UV_TARGET="/.local/lib/python3.12/site-packages"
+    if [ "$1" = "pip" ] && [ "$2" = "install" ]; then
+      has_target=
+      for arg in "$@"; do
+        if [ "$arg" = "--target" ] || [ "$arg" = "-t" ]; then has_target=1; break; fi
+      done
+      if [ -z "$has_target" ]; then
+        set -- "pip" "install" "--target" "$UV_TARGET" ''${@:3}
+      fi
+    fi
+    
     # Start uv
     exec ${pkgs.uv}/bin/uv "$@"
   '';
@@ -1387,6 +1400,8 @@ FONTSCONF
         # Font configuration for matplotlib
         "FONTCONFIG_PATH=/etc/fonts"
         "MPLCONFIGDIR=/home/python-user/.matplotlib"
+        # PTY/TUI: terminal type for interactive shells (vim, less, top, etc.)
+        "TERM=xterm-256color"
         # Disable dangerous modules
         "PYTHON_DISABLE_MODULES=os,subprocess,sys,importlib,exec,eval,compile,__import__,open,file,input,raw_input,urllib,requests,socket,ftplib,smtplib,poplib,imaplib,nntplib,telnetlib"
         # Restrict network access
