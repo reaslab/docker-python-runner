@@ -873,16 +873,19 @@ finally:
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-  <!-- Font directory list -->
+  <!-- Font directory list (Noto CJK in truetype/noto-cjk and symlinks in noto/) -->
   <dir>/usr/share/fonts</dir>
   <dir>/usr/share/fonts/truetype</dir>
   <dir>/usr/share/fonts/truetype/noto-cjk</dir>
+  <dir>/usr/share/fonts/noto</dir>
   <dir>/usr/share/fonts/opentype</dir>
   <dir>/usr/share/fonts/opentype/noto</dir>
   
   <!-- Include conf.d directory for additional configurations -->
   <include ignore_missing="yes">conf.d</include>
   
+  <!-- Writable cache for containers (no /var/cache) -->
+  <cachedir>/tmp/fontconfig-cache</cachedir>
   <!-- Rescan interval (in seconds) -->
   <rescan>
     <int>30</int>
@@ -951,12 +954,15 @@ FONTSCONF
         echo "  Successfully copied $FONT_COUNT font files to $out/usr/share/fonts/truetype/noto-cjk"
       fi
       
-      # Create symbolic links in alternative paths for compatibility with user scripts
-      # This allows scripts that check specific paths (like /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc) to find the fonts
+      # Symlinks in standard paths so fontconfig and apps find Noto CJK reliably
       mkdir -p $out/usr/share/fonts/opentype/noto
+      mkdir -p $out/usr/share/fonts/noto
+      find $out/usr/share/fonts/truetype/noto-cjk -maxdepth 1 -type f \( -name "*.ttc" -o -name "*.otf.ttc" \) 2>/dev/null | while read f; do
+        ln -sf ../../truetype/noto-cjk/$(basename "$f") $out/usr/share/fonts/noto/$(basename "$f") 2>/dev/null || true
+      done
       if [ -f $out/usr/share/fonts/truetype/noto-cjk/NotoSansCJK-VF.otf.ttc ]; then
         ln -sf ../../truetype/noto-cjk/NotoSansCJK-VF.otf.ttc $out/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc 2>/dev/null || true
-        echo "  Created symlink: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+        echo "  Created symlinks under /usr/share/fonts/noto and opentype/noto"
       fi
       
       # Create fontconfig configuration
@@ -988,58 +994,23 @@ FONTSCONF
 FONTCONF
       
       # Create matplotlib configuration directory and file at build time
+      # Use /tmp/.matplotlib so config dir is writable (font cache); /home may be read-only in containers
       mkdir -p $out/home/python-user/.matplotlib
+      mkdir -p $out/tmp/.matplotlib
       cat > $out/home/python-user/.matplotlib/matplotlibrc << 'MATPLOTLIBRC'
 font.family: sans-serif
 font.sans-serif: Noto Sans CJK JP, Noto Sans CJK TC, Noto Sans CJK SC, Noto Sans CJK KR, DejaVu Sans
 axes.unicode_minus: False
 MATPLOTLIBRC
+      cp $out/home/python-user/.matplotlib/matplotlibrc $out/tmp/.matplotlib/matplotlibrc
       
-      # Create font setup script for runtime
+      # Font setup at container start: writable dirs, matplotlibrc, font index, permissions for uv/cache
       cat > $out/setup-fonts.sh << 'EOF'
       #!/bin/bash
-      # Setup Chinese fonts for matplotlib
-      echo "Setting up Chinese font support..."
-      
-      # Ensure user cache directories exist (these can be created in tmpfs)
-      mkdir -p /home/python-user/.cache/fontconfig 2>/dev/null || true
-      mkdir -p /home/python-user/.matplotlib 2>/dev/null || true
-      
-      # Copy matplotlibrc from Nix store to runtime directory (if it exists)
-      # The runtime directory is tmpfs, so we need to copy the config file
-      if [ -f /nix/store/*-docker-setup/home/python-user/.matplotlib/matplotlibrc ]; then
-        MATPLOTLIBRC_SOURCE=$(find /nix/store -path "*/docker-setup/home/python-user/.matplotlib/matplotlibrc" 2>/dev/null | head -1)
-        if [ -n "$MATPLOTLIBRC_SOURCE" ]; then
-          cp "$MATPLOTLIBRC_SOURCE" /home/python-user/.matplotlib/matplotlibrc 2>/dev/null || true
-        fi
-      fi
-      
-      # Create/update matplotlibrc with correct font names
-      # Use actual available font names: Noto Sans CJK JP (available) instead of SC (may not be available)
-      cat > /home/python-user/.matplotlib/matplotlibrc << 'MATPLOTLIBRC'
-font.family: sans-serif
-font.sans-serif: Noto Sans CJK JP, Noto Sans CJK TC, Noto Sans CJK SC, Noto Sans CJK KR, DejaVu Sans
-axes.unicode_minus: False
-MATPLOTLIBRC
-      
-      # Update font cache (if fontconfig is available)
-      # Note: Font files are already in /usr/share/fonts/truetype/noto-cjk (copied at build time)
-      if command -v fc-cache >/dev/null 2>&1; then
-        fc-cache -fv 2>/dev/null || true
-      fi
-      
-      # Verify font files are accessible
-      if [ -f /usr/share/fonts/truetype/noto-cjk/NotoSansCJK-VF.otf.ttc ]; then
-        echo "✓ Noto CJK font files found in /usr/share/fonts/truetype/noto-cjk/"
-      else
-        echo "⚠ Warning: Noto CJK font files not found in expected location"
-      fi
-      
-      # Set matplotlib font configuration environment variables
-      export MPLCONFIGDIR=/home/python-user/.matplotlib
-      export FONTCONFIG_PATH=/etc/fonts
-      
-      # Ensure fonts.conf exists (fontconfig requires it)
+      echo "Setting up Chinese font support for matplotlib..."
+      mkdir -p /tmp/.matplotlib /tmp/fontconfig-cache /tmp/.cache/fontconfig /tmp/fonts-cache
+      chmod -R 0777 /tmp/.matplotlib /tmp/fontconfig-cache /tmp/.cache /tmp/fonts-cache 2>/dev/null || true
+      printf '%s\n' 'font.family: sans-serif' 'font.sans-serif: Noto Sans CJK JP, Noto Sans CJK TC, Noto Sans CJK SC, Noto Sans CJK KR, DejaVu Sans' 'axes.unicode_minus: False' > /tmp/.matplotlib/matplotlibrc
       if [ ! -f /etc/fonts/fonts.conf ]; then
         mkdir -p /etc/fonts
         cat > /etc/fonts/fonts.conf << 'FONTSCONF'
@@ -1049,17 +1020,18 @@ MATPLOTLIBRC
   <dir>/usr/share/fonts</dir>
   <dir>/usr/share/fonts/truetype</dir>
   <dir>/usr/share/fonts/truetype/noto-cjk</dir>
+  <dir>/usr/share/fonts/noto</dir>
   <dir>/usr/share/fonts/opentype</dir>
   <dir>/usr/share/fonts/opentype/noto</dir>
   <include ignore_missing="yes">conf.d</include>
-  <rescan>
-    <int>30</int>
-  </rescan>
+  <cachedir>/tmp/fontconfig-cache</cachedir>
+  <rescan><int>30</int></rescan>
 </fontconfig>
 FONTSCONF
       fi
-      
-      echo "Chinese font support configured"
+      command -v fc-cache >/dev/null 2>&1 && fc-cache -fv /usr/share/fonts 2>/dev/null || true
+      chmod -R 0777 /home/python-user /.local 2>/dev/null || true
+      [ -f /usr/share/fonts/truetype/noto-cjk/NotoSansCJK-VF.otf.ttc ] && echo "✓ Noto CJK fonts ready (MPLCONFIGDIR=/tmp/.matplotlib)" || echo "⚠ Noto CJK fonts not found"
       EOF
       
       chmod +x $out/setup-fonts.sh
@@ -1313,7 +1285,8 @@ in
     # Rarely changed items (like system libraries) go in bottom layers
     contents = [
       runtimeEnv      # Layer group 1: System Python, libraries (rarely changes)
-      dockerSetup     # Layer group 2: Setup scripts and configs (occasionally changes)
+      dockerSetup     # Layer group 2: Setup scripts, fonts, configs (occasionally changes)
+      pkgs.fontconfig # fc-cache at container start for font index
       pkgs.cacert     # Layer group 3: CA certificates (rarely changes)
     ];
 
@@ -1326,10 +1299,11 @@ in
       set -eu
 
       # Ensure runtime directories exist in the layer
-      mkdir -p tmp tmp/.uv_cache .local/lib/python3.12/site-packages home/python-user app
+      mkdir -p tmp tmp/.uv_cache tmp/.matplotlib tmp/fontconfig-cache tmp/.cache/fontconfig .local/lib/python3.12/site-packages home/python-user app
       mkdir -p usr/share/fonts/truetype/noto-cjk
       mkdir -p usr/share/fonts/opentype/noto
       mkdir -p etc/fonts/conf.d
+      chmod -R 0777 tmp/.matplotlib tmp/fontconfig-cache tmp/.cache 2>/dev/null || true
       
       # Ensure fonts.conf exists (fontconfig requires it)
       if [ ! -f etc/fonts/fonts.conf ]; then
@@ -1343,6 +1317,7 @@ in
   <dir>/usr/share/fonts/opentype</dir>
   <dir>/usr/share/fonts/opentype/noto</dir>
   <include ignore_missing="yes">conf.d</include>
+  <cachedir>/tmp/fontconfig-cache</cachedir>
   <rescan>
     <int>30</int>
   </rescan>
@@ -1397,9 +1372,13 @@ FONTSCONF
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "CURL_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "REQUESTS_CA_BUNDLE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-        # Font configuration for matplotlib
+        # Locale and fonts: support Chinese paths and ensure fontconfig finds config
+        "LANG=C.UTF-8"
+        "LC_ALL=C.UTF-8"
         "FONTCONFIG_PATH=/etc/fonts"
-        "MPLCONFIGDIR=/home/python-user/.matplotlib"
+        "FONTCONFIG_FILE=/etc/fonts/fonts.conf"
+        "MPLCONFIGDIR=/tmp/.matplotlib"
+        "XDG_CACHE_HOME=/tmp/.cache"
         # PTY/TUI: terminal type for interactive shells (vim, less, top, etc.)
         "TERM=xterm-256color"
         # Disable dangerous modules
