@@ -22,6 +22,8 @@ let
     scipy
     pandas
     matplotlib
+    plotly
+    kaleido  # Plotly static image export (fig.write_image)
     scikit-learn
     seaborn
     networkx  # Graphs for optimization (e.g. VRP, routing)
